@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lmm-rss-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rss_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-rss_monitor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # PostgreSQL не публикуется наружу. API и worker ходят к нему по внутренней docker-сети.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rss_monitor} -d ${POSTGRES_DB:-rss_monitor}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: lmm-rss-api
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "${API_BIND:-0.0.0.0}:8080:8080"
+
+  worker:
+    build: .
+    container_name: lmm-rss-worker
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python -m app.worker
+
+volumes:
+  postgres_data:

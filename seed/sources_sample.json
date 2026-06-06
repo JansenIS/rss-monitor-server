@@ -1,0 +1,26 @@
+{
+  "sources": [
+    {
+      "country_code": "SC",
+      "country_name": "Seychelles",
+      "source_name": "Seychelles Nation",
+      "source_type": "news_site",
+      "homepage_url": "https://www.nation.sc/",
+      "rss_url": "https://www.nation.sc/rss",
+      "language": "en",
+      "priority": 5,
+      "reliability": 4
+    },
+    {
+      "country_code": "CG",
+      "country_name": "Republic of the Congo",
+      "source_name": "ADIAC Congo",
+      "source_type": "news_site",
+      "homepage_url": "https://www.adiac-congo.com/",
+      "rss_url": "https://www.adiac-congo.com/rss.xml",
+      "language": "fr",
+      "priority": 5,
+      "reliability": 4
+    }
+  ]
+}
