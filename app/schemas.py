@@ -100,6 +100,9 @@ class ImportResult(BaseModel):
     sources_added: int = 0
     sources_updated: int = 0
     sources_skipped: int = 0
+    articles_added: int = 0
+    articles_duplicate: int = 0
+    articles_skipped: int = 0
     errors: list[str] = Field(default_factory=list)
 
 

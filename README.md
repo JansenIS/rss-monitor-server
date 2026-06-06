@@ -1,4 +1,4 @@
-# RSS Monitor Server v0.1.1 — Ubuntu 24 / Docker
+# RSS Monitor Server v0.1.2 — Ubuntu 24 / Docker
 
 Headless-сервер для постоянного RSS-ingestion: обходит базу RSS-источников циклом `полный проход → пауза 10 минут → следующий полный проход`, сохраняет материалы в PostgreSQL и отдаёт их локальному Tauri-клиенту через HTTP API.
 
@@ -39,7 +39,7 @@ Worker работает так:
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y unzip rsync openssl curl jq
-unzip rss-monitor-server-v0.1.1-ubuntu24.zip
+unzip rss-monitor-server-v0.1.2-ubuntu24.zip
 cd rss-monitor-server
 sudo bash scripts/linux/install_docker_ubuntu24.sh
 sudo bash scripts/linux/deploy_ubuntu24.sh /opt/lmm-rss-monitor
@@ -148,3 +148,41 @@ sudo bash scripts/linux/restore.sh /opt/lmm-rss-monitor /path/to/rss_monitor_YYY
 ## Подробная инструкция
 
 См. `docs/UBUNTU_24_DEPLOY.md`.
+
+
+## v0.1.2 hotfix
+
+Исправлен Docker-default `DATABASE_URL`: внутри контейнеров нужно обращаться к PostgreSQL по имени сервиса `postgres`, а не `localhost`. Также добавлено ожидание готовности БД при старте API/worker.
+
+Если `.env` уже создан и содержит `@localhost:5432`, исправь:
+
+```bash
+sed -i 's/@localhost:5432/@postgres:5432/g' .env
+sed -i 's/@127.0.0.1:5432/@postgres:5432/g' .env
+docker compose down
+docker compose up -d --build --force-recreate
+```
+
+## Import full Tauri client database export
+
+This server accepts the JSON created by the Tauri client in `Перенос → Выгрузить всё`.
+
+Upload from the server filesystem:
+
+```bash
+cd /opt/lmm-rss-monitor
+TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
+
+curl -X POST "http://127.0.0.1:8080/api/v1/database/import?import_sources=true&import_mentions=true" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@/opt/lmm-rss-monitor/local-media-monitor-full.json"
+```
+
+The import endpoint supports:
+
+- sources from the Tauri `sources` array;
+- saved local materials from the Tauri `mentions` array;
+- duplicate detection by URL hash;
+- old Tauri source IDs remapped to server-side source IDs.
+
+The legacy endpoint `/api/v1/sources/import` also detects `schema=local-media-monitor-transfer-v1` and imports both sources and materials.

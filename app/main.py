@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import SessionLocal, init_db
-from .importer import import_sources_payload
+from .importer import import_sources_payload, import_tauri_transfer_payload
 from .models import Article, FetchCommand, FetchRun, FetchSourceLog, Source
 from .schemas import (
     ArticleOut,
@@ -119,6 +119,49 @@ def import_sources_json(
     _: None = Depends(require_auth),
 ):
     return import_sources_payload(db, payload, include_secondary=include_secondary)
+
+
+
+
+@app.post('/api/v1/database/import', response_model=ImportResult)
+async def import_tauri_database_file(
+    import_sources: bool = Query(True),
+    import_mentions: bool = Query(True),
+    file: UploadFile | None = File(default=None),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    """Import full JSON export created by Tauri: Transfer -> Export all."""
+    if not file:
+        raise HTTPException(status_code=400, detail='Upload Tauri full database JSON as multipart field "file"')
+    raw = await file.read()
+    try:
+        payload = json.loads(raw.decode('utf-8-sig'))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f'Invalid JSON: {exc}')
+    return import_tauri_transfer_payload(
+        db,
+        payload,
+        import_sources=import_sources,
+        import_mentions=import_mentions,
+    )
+
+
+@app.post('/api/v1/database/import-json', response_model=ImportResult)
+def import_tauri_database_json(
+    payload: dict,
+    import_sources: bool = Query(True),
+    import_mentions: bool = Query(True),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    """Import full JSON export created by Tauri: Transfer -> Export all."""
+    return import_tauri_transfer_payload(
+        db,
+        payload,
+        import_sources=import_sources,
+        import_mentions=import_mentions,
+    )
 
 
 @app.get('/api/v1/sources', response_model=list[SourceOut])
