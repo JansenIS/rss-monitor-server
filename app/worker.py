@@ -4,6 +4,8 @@ import asyncio
 import time
 from datetime import datetime, timezone
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import SessionLocal, init_db
@@ -19,18 +21,22 @@ def _load_sources(db: Session, country_code: str | None = None) -> list[Source]:
     return list(db.execute(stmt).scalars().all())
 
 
-def _save_source_result(db: Session, run_id: int, source: Source, result: SourceFetchResult) -> tuple[int, int]:
+def _save_source_result(db: Session, run_id: int, source: Source, result: SourceFetchResult, known_hashes: set[str]) -> tuple[int, int]:
     started = now_utc()
     new_count = 0
     duplicate_count = 0
 
     if result.ok:
         for item in result.articles:
-            exists = db.execute(select(Article.id).where(Article.url_hash == item.url_hash)).scalar_one_or_none()
-            if exists:
+            # Дедупликация должна работать не только против уже сохранённой базы,
+            # но и против материалов, уже добавленных в текущем проходе до commit().
+            # Иначе при autoflush=False два одинаковых url_hash из разных источников
+            # или из одного RSS падают на UNIQUE(ix_articles_url_hash) при commit().
+            if not item.url_hash or item.url_hash in known_hashes:
                 duplicate_count += 1
                 continue
-            db.add(Article(
+
+            stmt = pg_insert(Article).values(
                 source_id=source.id,
                 country_code=source.country_code,
                 country_name=source.country_name,
@@ -48,8 +54,13 @@ def _save_source_result(db: Session, run_id: int, source: Source, result: Source
                 content_hash=item.content_hash,
                 url_hash=item.url_hash,
                 raw_json=item.raw_json,
-            ))
-            new_count += 1
+            ).on_conflict_do_nothing(index_elements=['url_hash'])
+            insert_result = db.execute(stmt)
+            known_hashes.add(item.url_hash)
+            if insert_result.rowcount == 1:
+                new_count += 1
+            else:
+                duplicate_count += 1
 
         source.last_fetch_at = now_utc()
         source.last_success_at = now_utc()
@@ -116,11 +127,27 @@ async def run_fetch_pass(country_code: str | None = None) -> int:
         articles_new = 0
         articles_duplicate = 0
 
+        candidate_hashes = sorted({
+            item.url_hash
+            for result in results
+            if result.ok
+            for item in result.articles
+            if item.url_hash
+        })
+        known_hashes: set[str] = set()
+        # Грузим уже существующие хэши чанками, чтобы не создавать огромный IN (...)
+        # на больших проходах. Новые хэши текущего прохода добавляются в этот же set.
+        chunk_size = 1000
+        for i in range(0, len(candidate_hashes), chunk_size):
+            chunk = candidate_hashes[i:i + chunk_size]
+            existing = db.execute(select(Article.url_hash).where(Article.url_hash.in_(chunk))).scalars().all()
+            known_hashes.update(existing)
+
         for result in results:
             source = sources_by_id.get(result.source_id)
             if not source:
                 continue
-            new_count, duplicate_count = _save_source_result(db, run_id, source, result)
+            new_count, duplicate_count = _save_source_result(db, run_id, source, result, known_hashes)
             if result.ok:
                 sources_ok += 1
             else:
@@ -136,7 +163,17 @@ async def run_fetch_pass(country_code: str | None = None) -> int:
             run.articles_new = articles_new
             run.articles_duplicate = articles_duplicate
             run.duration_seconds = int((run.finished_at - run.started_at).total_seconds())
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            if run:
+                run.status = 'failed'
+                run.finished_at = now_utc()
+                run.error_text = f'IntegrityError while saving fetch pass: {exc}'
+                run.duration_seconds = int((run.finished_at - run.started_at).total_seconds())
+                db.commit()
+            raise
 
     return run_id
 

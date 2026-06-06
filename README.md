@@ -188,7 +188,7 @@ The import endpoint supports:
 The legacy endpoint `/api/v1/sources/import` also detects `schema=local-media-monitor-transfer-v1` and imports both sources and materials.
 
 
-## v0.1.4
+## v0.1.5
 
-Исправлено падение worker/API на `DetachedInstanceError` при полном проходе по источникам.
+Исправлено падение worker/API на `duplicate url_hash` при полном проходе по источникам.
 Причина была в стандартном поведении SQLAlchemy `expire_on_commit=True`: после commit ORM-объекты `Source` становились detached, а асинхронный сборщик пытался читать их поля уже вне Session. Теперь `SessionLocal` создаётся с `expire_on_commit=False`, поэтому загруженные поля источников остаются доступными для fetch-pass.
