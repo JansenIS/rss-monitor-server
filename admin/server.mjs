@@ -10,6 +10,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '5173', 10);
 const apiTarget = process.env.API_TARGET || 'http://127.0.0.1:8080';
+const placeholderHosts = new Set(['server_ip', 'api_host']);
 
 const mimeTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -31,6 +32,32 @@ function safePath(requestUrl) {
   return resolved;
 }
 
+function formatProxyError(error, target) {
+  const targetHost = target.hostname.toLowerCase();
+  if (placeholderHosts.has(targetHost)) {
+    return [
+      `API proxy error: ${error.message}`,
+      '',
+      `API_TARGET contains placeholder host "${target.hostname}".`,
+      'Replace SERVER_IP/API_HOST with the real FastAPI server IP or DNS name, for example:',
+      'API_TARGET=http://192.0.2.10:8080 PORT=5173 npm start',
+      '',
+      'If FastAPI runs on the same machine as this npm admin server, omit API_TARGET or use:',
+      'API_TARGET=http://127.0.0.1:8080 PORT=5173 npm start',
+    ].join('\n');
+  }
+
+  if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+    return [
+      `API proxy error: ${error.message}`,
+      '',
+      `Could not resolve API_TARGET host "${target.hostname}".`,
+      'Check that API_TARGET is a reachable URL for the FastAPI server.',
+    ].join('\n');
+  }
+
+  return `API proxy error: ${error.message}`;
+}
 
 function proxyApi(request, response) {
   const target = new URL(request.url || '/', apiTarget);
@@ -52,7 +79,7 @@ function proxyApi(request, response) {
 
   proxyRequest.on('error', error => {
     response.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
-    response.end(`API proxy error: ${error.message}`);
+    response.end(formatProxyError(error, target));
   });
 
   request.pipe(proxyRequest);
