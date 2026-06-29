@@ -99,7 +99,7 @@ function buildNetworkErrorMessage(error, url) {
     'Браузер не смог подключиться к API-серверу.',
     `Проверьте, что адрес API открыт: ${url}`,
     'Проверьте, что FastAPI/контейнер запущен и порт API доступен с этого устройства.',
-    'Проверьте, что в Server URL указан именно адрес API, например http://SERVER_IP:8080, а не адрес этой админки.',
+    'Проверьте Server URL: для /admin обычно это http://SERVER_IP:8080, а для npm-админки на 5173 можно оставить http://SERVER_IP:5173 — npm-сервер проксирует /api/* в FastAPI.',
   ];
 
   if (pageProtocol === 'https:' && target?.protocol === 'http:') {
@@ -166,15 +166,6 @@ function saveLocal() {
 function defaultServerUrl() {
   if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
     return '';
-  }
-
-  const currentUrl = new URL(window.location.href);
-  if (currentUrl.port && currentUrl.port !== '8080') {
-    currentUrl.port = '8080';
-    currentUrl.pathname = '';
-    currentUrl.search = '';
-    currentUrl.hash = '';
-    return currentUrl.origin;
   }
 
   return window.location.origin;
