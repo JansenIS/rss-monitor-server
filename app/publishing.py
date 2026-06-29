@@ -221,18 +221,65 @@ def _slug(text: str) -> str:
     return slug[:120] or 'article'
 
 
+def _coerce_category_id(value: Any) -> int | None:
+    try:
+        category_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return category_id if category_id > 0 else None
+
+
+def category_ids(categories: list | None) -> list[int]:
+    ids: list[int] = []
+    for category in categories or []:
+        category_id = None
+        if isinstance(category, (int, str)):
+            category_id = _coerce_category_id(category)
+        elif isinstance(category, dict):
+            category_id = _coerce_category_id(category.get('id'))
+        if category_id is not None and category_id not in ids:
+            ids.append(category_id)
+    return ids
+
+
+def category_options(categories: list | None) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    for category in categories or []:
+        if isinstance(category, (int, str)):
+            category_id = _coerce_category_id(category)
+            if category_id is not None:
+                options.append({'id': category_id, 'name': str(category_id)})
+        elif isinstance(category, dict):
+            category_id = _coerce_category_id(category.get('id'))
+            if category_id is not None:
+                options.append({'id': category_id, 'name': str(category.get('name') or category_id)})
+    return options
+
+
+def wordpress_post_category_ids(article_categories: Any, site_categories: list | None) -> list[int]:
+    fallback_ids = category_ids(site_categories)
+    selected_ids = category_ids(article_categories)
+    if not selected_ids:
+        return fallback_ids
+    if not fallback_ids:
+        return selected_ids
+    allowed = set(fallback_ids)
+    filtered_ids = [category_id for category_id in selected_ids if category_id in allowed]
+    return filtered_ids or fallback_ids
+
+
 def build_rewrite_messages(snapshot: list[dict[str, Any]], site: WordPressSite, job: PublishJob, planned_date: str | None = None, sequence_number: int | None = None) -> list[dict[str, str]]:
     country = job.country_name or job.country_code
     return [
-        {'role': 'system', 'content': 'You are an SEO editor. Return only valid JSON with keys: title, slug, excerpt, content_html, seo_title, meta_description, category_ids. Choose category_ids only from the provided WordPress category IDs.'},
+        {'role': 'system', 'content': 'You are an SEO editor. Return only valid JSON with keys: title, slug, excerpt, content_html, seo_title, meta_description, category_ids. Choose category_ids only from the provided WordPress categories.'},
         {'role': 'user', 'content': json.dumps({
             'task': 'Write a unique SEO-optimized article from the news digest. Do not copy source wording. Adapt angle to this site only. If planned_publication_date is provided, write as if published on that historical date without saying this is retrospective.',
             'country': country,
             'target_language': site.language or job.target_language,
             'site_name': site.name,
             'site_specificity': site.specificity or job.specificity,
-            'available_wordpress_category_ids': site.categories or [],
-            'category_instruction': 'Categorize the article while writing it and return category_ids selected from available_wordpress_category_ids.',
+            'available_wordpress_categories': category_options(site.categories),
+            'category_instruction': 'Categorize the article while writing it and return category_ids selected only from available_wordpress_categories.id. Use category names to choose the best semantic match.',
             'stop_words': job.stop_words,
             'source_news': snapshot,
             'planned_publication_date': planned_date,
@@ -252,14 +299,15 @@ async def upload_to_wordpress(site: WordPressSite, article: dict[str, Any], imag
             media = media_resp.json()
             media_id = media.get('id')
             if media_id:
-                await client.post(f'{base}/media/{media_id}', json={'alt_text': image_prompt[:250]})
+                alt_resp = await client.post(f'{base}/media/{media_id}', json={'alt_text': image_prompt[:250]})
+                alt_resp.raise_for_status()
         post_payload = {
             'title': article.get('title'),
             'slug': article.get('slug') or _slug(article.get('title', 'article')),
             'excerpt': article.get('excerpt'),
             'content': article.get('content_html') or article.get('content'),
             'status': site.default_status or 'draft',
-            'categories': article.get('category_ids') or site.categories or [],
+            'categories': wordpress_post_category_ids(article.get('category_ids'), site.categories),
         }
         if publish_at:
             post_payload['date'] = publish_at.isoformat()
