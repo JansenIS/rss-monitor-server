@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import date, datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceOut(BaseModel):
@@ -121,7 +121,7 @@ class PublishingSettingsIn(BaseModel):
     routerai_base_url: str | None = None
     rewrite_model: str | None = None
     image_model: str | None = None
-    default_language: str = 'ru'
+    default_language: str = 'en'
     stop_words: str | None = None
     specificity: str | None = None
 
@@ -133,18 +133,46 @@ class PublishingSettingsOut(PublishingSettingsIn):
     model_config = {'from_attributes': True}
 
 
+class WordPressCategory(BaseModel):
+    id: int
+    name: str
+
+
 class WordPressSiteIn(BaseModel):
     name: str
     base_url: str
     username: str | None = None
     app_password: str | None = None
     default_status: str = 'draft'
-    categories: list[int] = Field(default_factory=list)
+    categories: list[WordPressCategory] = Field(default_factory=list)
     language: str | None = None
     specificity: str | None = None
     generation_limit_per_hour: int | None = Field(default=None, ge=1)
     generation_limit_per_24h: int | None = Field(default=None, ge=1)
     is_active: bool = True
+
+    @field_validator('categories', mode='before')
+    @classmethod
+    def normalize_categories(cls, value):
+        if value is None:
+            return []
+        normalized = []
+        for item in value:
+            if isinstance(item, int):
+                normalized.append({'id': item, 'name': str(item)})
+            elif isinstance(item, str):
+                raw = item.strip()
+                if raw.isdigit():
+                    normalized.append({'id': int(raw), 'name': raw})
+                elif ':' in raw:
+                    category_id, name = raw.split(':', 1)
+                    if category_id.strip().isdigit():
+                        normalized.append({'id': int(category_id.strip()), 'name': name.strip() or category_id.strip()})
+            elif isinstance(item, dict):
+                category_id = item.get('id')
+                if category_id is not None:
+                    normalized.append({'id': int(category_id), 'name': str(item.get('name') or category_id)})
+        return normalized
 
 
 class WordPressSiteOut(WordPressSiteIn):
