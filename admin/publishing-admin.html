@@ -80,13 +80,53 @@ function serverBaseUrl() {
   if (!value) {
     throw new Error('Укажите Server URL в блоке подключения к серверу');
   }
+  if (!/^https?:\/\//i.test(value)) {
+    throw new Error('Server URL должен начинаться с http:// или https://');
+  }
   return value;
+}
+
+function buildNetworkErrorMessage(error, url) {
+  const pageProtocol = window.location.protocol;
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    target = null;
+  }
+
+  const hints = [
+    'Браузер не смог подключиться к API-серверу.',
+    `Проверьте, что адрес API открыт: ${url}`,
+    'Проверьте, что FastAPI/контейнер запущен и порт API доступен с этого устройства.',
+    'Проверьте, что в Server URL указан именно адрес API, например http://SERVER_IP:8080, а не адрес этой админки.',
+  ];
+
+  if (pageProtocol === 'https:' && target?.protocol === 'http:') {
+    hints.push('Админка открыта по HTTPS, а API указан по HTTP: браузер может блокировать mixed content. Откройте админку по HTTP или настройте HTTPS для API.');
+  }
+
+  if (target && !['localhost', '127.0.0.1', '::1'].includes(target.hostname)) {
+    hints.push('Если API запущен на другом сервере, проверьте firewall/security group и проброс порта.');
+  }
+
+  hints.push('Если запрос виден в Network как CORS/preflight error, разрешите origin админки в API_CORS_ORIGINS или оставьте значение по умолчанию ["*"].');
+
+  return `Ошибка сети: ${error?.message || error}\n\n${hints.map(item => `- ${item}`).join('\n')}`;
+}
+
+async function fetchApi(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    throw new Error(buildNetworkErrorMessage(error, url));
+  }
 }
 
 async function api(path, opts = {}) {
   const url = `${serverBaseUrl()}${path}`;
   log(`Запрос: ${opts.method || 'GET'} ${url}`);
-  const response = await fetch(url, {
+  const response = await fetchApi(url, {
     ...opts,
     headers: {
       ...headers(),
