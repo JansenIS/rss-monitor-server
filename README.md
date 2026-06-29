@@ -192,3 +192,77 @@ The legacy endpoint `/api/v1/sources/import` also detects `schema=local-media-mo
 
 Исправлено падение worker/API на `duplicate url_hash` при полном проходе по источникам.
 Причина была в стандартном поведении SQLAlchemy `expire_on_commit=True`: после commit ORM-объекты `Source` становились detached, а асинхронный сборщик пытался читать их поля уже вне Session. Теперь `SessionLocal` создаётся с `expire_on_commit=False`, поэтому загруженные поля источников остаются доступными для fetch-pass.
+
+## RouterAI → WordPress publishing pipeline
+
+Сервер остаётся headless: графическая админка не встраивается в FastAPI. Для управления добавлен самостоятельный файл `admin/publishing-admin.html`, который открывается на пользовательском устройстве и обращается к API сервера по Bearer token.
+
+Новые возможности:
+
+- выбор новостей по `country_code` за последний час или другой период до 24 часов;
+- сохранение ключа RouterAI на сервере;
+- настройка RouterAI-compatible `base_url`, LLM-модели рерайта и модели генерации изображений;
+- генерация уникальной SEO-версии статьи для каждого активного WordPress-сайта;
+- обязательное включение конкретной страны в промпт изображения и запрет стереотипной природы: носорогов, попугаев, крокодилов, джунглей и похожих generic wildlife-сцен;
+- загрузка изображения в WordPress Media API и публикация поста через WordPress REST API;
+- настройка категорий WordPress по каждому сайту.
+
+Новые API endpoints:
+
+```text
+GET  /api/v1/publishing/settings
+PUT  /api/v1/publishing/settings
+GET  /api/v1/publishing/sites
+POST /api/v1/publishing/sites
+PUT  /api/v1/publishing/sites/{site_id}
+DELETE /api/v1/publishing/sites/{site_id}
+GET  /api/v1/publishing/recent-news
+POST /api/v1/publishing/jobs
+GET  /api/v1/publishing/jobs
+GET  /api/v1/publishing/jobs/{job_id}/articles
+```
+
+Минимальный сценарий:
+
+1. Открой `admin/publishing-admin.html` локально в браузере.
+2. Укажи URL сервера и Bearer token.
+3. Сохрани RouterAI key, модели и общие ограничения.
+4. Добавь WordPress-сайты с Application Password и ID категорий.
+5. Создай publishing job по стране, языку и количеству сайтов.
+6. Worker заберёт задание из очереди, создаст уникальные статьи и выгрузит их в WordPress.
+
+### Ретроспективный publishing по архиву
+
+Endpoint `POST /api/v1/publishing/jobs` поддерживает `pipeline_type=retrospective`. В этом режиме сервер берёт архивные материалы из собственной БД за календарный период и планирует публикации с датами в прошлом.
+
+Пример тела запроса:
+
+```json
+{
+  "pipeline_type": "retrospective",
+  "country_code": "SC",
+  "country_name": "Seychelles",
+  "target_language": "ru",
+  "period_start": "2026-06-01",
+  "period_end": "2026-06-20",
+  "articles_per_day": 8,
+  "site_limit": 3
+}
+```
+
+Для каждого активного сайта worker создаёт `articles_per_day × количество_календарных_дней_включительно` уникальных публикаций. Например, период `2026-06-01` → `2026-06-20` включает 20 дней, поэтому при `articles_per_day=8` каждый сайт получит 160 публикаций; если нужен результат 180 публикаций, укажи 9 статей в день на 20 дней или период/квоту, произведение которых равно 180.
+
+Каждая публикация получает `scheduled_for`, а при отправке в WordPress API дата передаётся в поле `date`, чтобы пост был опубликован/создан с исторической датой.
+
+### Лимиты генерации и защита от дублей
+
+Для каждого WordPress-сайта можно настроить:
+
+- `generation_limit_per_hour` — максимум попыток генерации статей за скользящий час;
+- `generation_limit_per_24h` — максимум попыток генерации статей за скользящие 24 часа.
+
+Перед каждым вызовом RouterAI worker проверяет эти лимиты по истории `published_articles`. Если лимит исчерпан, статья не генерируется, job переводится в `rate_limited`, получает `retry_after` и будет автоматически продолжена после сброса соответствующего окна.
+
+Исходные материалы получают флаги `publishing_used_at` и `publishing_job_id` после успешной публикации. Последующие recent/retrospective snapshots выбирают только материалы без `publishing_used_at`, чтобы не писать новые статьи по уже использованным новостям.
+
+Категоризация выполняется на этапе написания статьи: в prompt передаются доступные ID категорий WordPress конкретного сайта (`available_wordpress_category_ids`), а модель должна вернуть `category_ids`. Эти ID затем уходят в WordPress REST API в поле `categories`.
