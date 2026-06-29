@@ -10,12 +10,12 @@
 </head>
 <body>
   <h1>Headless RSS → RouterAI → WordPress</h1>
-  <p>Этот файл запускается на пользовательском устройстве. Сервер остаётся без графической админки.</p>
+  <p>Эту админку можно открыть через FastAPI по /admin или запустить отдельно на пользовательском устройстве.</p>
 
   <fieldset>
     <legend>Подключение к серверу</legend>
     <div class="row"><div><label>Server URL</label><input id="server" placeholder="http://SERVER_IP:8080"></div><div><label>Bearer token</label><input id="token" type="password"></div></div>
-    <button data-action="saveLocal">Сохранить локально в браузере</button>
+    <button data-action="saveLocal">Сохранить локально в браузере</button> <button data-action="checkApi">Проверить API</button>
   </fieldset>
 
   <fieldset>
@@ -163,9 +163,21 @@ function saveLocal() {
   log('Сохранено локально');
 }
 
+function defaultServerUrl() {
+  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+    return window.location.origin;
+  }
+  return '';
+}
+
 function restoreLocal() {
-  $('server').value = localStorage.rssPubServer || '';
+  $('server').value = localStorage.rssPubServer || defaultServerUrl();
   $('token').value = localStorage.rssPubToken || '';
+}
+
+async function checkApi() {
+  const health = await api('/api/v1/health');
+  log({ ok: true, health });
 }
 
 async function loadSettings() {
@@ -324,6 +336,7 @@ async function loadJobs() {
 
 const actions = {
   saveLocal,
+  checkApi,
   loadSettings,
   saveSettings,
   saveSite,
