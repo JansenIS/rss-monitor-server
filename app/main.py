@@ -346,6 +346,7 @@ def get_publishing_settings(db: Session = Depends(get_db), _: None = Depends(req
 
 
 @app.put('/api/v1/publishing/settings', response_model=PublishingSettingsOut)
+@app.post('/api/v1/publishing/settings', response_model=PublishingSettingsOut)
 def update_publishing_settings(payload: PublishingSettingsIn, db: Session = Depends(get_db), _: None = Depends(require_auth)):
     settings_obj = get_or_create_settings(db)
     for field, value in payload.model_dump(exclude_unset=True).items():
