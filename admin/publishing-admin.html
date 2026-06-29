@@ -76,7 +76,8 @@ function headers() {
 }
 
 function serverBaseUrl() {
-  const value = $('server').value.trim().replace(/\/$/, '');
+  const rawValue = $('server').value.trim().replace(/\/$/, '');
+  const value = rawValue.replace(/\/api\/v1$/i, '').replace(/\/api$/i, '');
   if (!value) {
     throw new Error('Укажите Server URL в блоке подключения к серверу');
   }
@@ -141,7 +142,11 @@ async function api(path, opts = {}) {
     body = text;
   }
   if (!response.ok) {
-    throw new Error(typeof body === 'string' ? body : JSON.stringify(body));
+    const message = typeof body === 'string' ? body : JSON.stringify(body);
+    const hint = response.status === 404
+      ? '\n\nПодсказка: проверьте Server URL. Укажите только origin API/админки, например http://SERVER_IP:8080 или http://SERVER_IP:5173, без /api и /api/v1.'
+      : '';
+    throw new Error(`${message}${hint}`);
   }
   return body;
 }
