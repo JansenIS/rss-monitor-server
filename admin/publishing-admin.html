@@ -164,10 +164,20 @@ function saveLocal() {
 }
 
 function defaultServerUrl() {
-  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
-    return window.location.origin;
+  if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
+    return '';
   }
-  return '';
+
+  const currentUrl = new URL(window.location.href);
+  if (currentUrl.port && currentUrl.port !== '8080') {
+    currentUrl.port = '8080';
+    currentUrl.pathname = '';
+    currentUrl.search = '';
+    currentUrl.hash = '';
+    return currentUrl.origin;
+  }
+
+  return window.location.origin;
 }
 
 function restoreLocal() {
