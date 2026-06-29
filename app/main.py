@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Annotated
 import orjson
@@ -86,9 +87,16 @@ def index(db: Session = Depends(get_db)) -> str:
         <li>Материалов: {articles_total}</li>
         <li>Последний проход: {last_run_html}</li>
       </ul>
+      <p>Publishing admin: <a href="/admin">/admin</a>.</p>
       <p>API: <code>/api/v1/health</code>, <code>/api/v1/articles</code>, <code>/api/v1/sync/articles</code>, <code>/docs</code>.</p>
     </body></html>
     '''
+
+
+@app.get('/admin', response_class=HTMLResponse)
+def publishing_admin() -> HTMLResponse:
+    admin_path = Path(__file__).resolve().parent.parent / 'admin' / 'publishing-admin.html'
+    return HTMLResponse(admin_path.read_text(encoding='utf-8'))
 
 
 @app.get('/api/v1/health')
