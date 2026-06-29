@@ -76,15 +76,26 @@ function headers() {
 }
 
 function serverBaseUrl() {
-  const rawValue = $('server').value.trim().replace(/\/$/, '');
-  const value = rawValue.replace(/\/api\/v1$/i, '').replace(/\/api$/i, '');
-  if (!value) {
+  const rawValue = $('server').value.trim();
+  if (!rawValue) {
     throw new Error('Укажите Server URL в блоке подключения к серверу');
   }
-  if (!/^https?:\/\//i.test(value)) {
+  if (!/^https?:\/\//i.test(rawValue)) {
     throw new Error('Server URL должен начинаться с http:// или https://');
   }
-  return value;
+
+  let parsed;
+  try {
+    parsed = new URL(rawValue);
+  } catch {
+    throw new Error('Server URL должен быть корректным URL, например http://SERVER_IP:8080');
+  }
+
+  const apiPrefixMatch = parsed.pathname.match(/^(.*?)(?:\/api(?:\/v1)?)(?:\/.*)?$/i);
+  const adminPrefixMatch = parsed.pathname.match(/^(.*?)(?:\/admin)(?:\/.*)?$/i);
+  const matchedBasePath = apiPrefixMatch ? apiPrefixMatch[1] : (adminPrefixMatch ? adminPrefixMatch[1] : parsed.pathname);
+  const basePath = matchedBasePath.replace(/\/+$/, '');
+  return `${parsed.origin}${basePath === '/' ? '' : basePath}`;
 }
 
 function buildNetworkErrorMessage(error, url) {
