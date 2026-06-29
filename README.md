@@ -195,7 +195,7 @@ The legacy endpoint `/api/v1/sources/import` also detects `schema=local-media-mo
 
 ## RouterAI → WordPress publishing pipeline
 
-Сервер остаётся headless: графическая админка не встраивается в FastAPI. Для управления добавлен самостоятельный файл `admin/publishing-admin.html`, который открывается на пользовательском устройстве и обращается к API сервера по Bearer token.
+Сервер остаётся headless: графическая админка не встраивается в FastAPI. Для управления добавлен самостоятельный npm-запускаемый frontend в каталоге `admin/`, который открывается на пользовательском устройстве и обращается к API сервера по Bearer token.
 
 Новые возможности:
 
@@ -222,9 +222,26 @@ GET  /api/v1/publishing/jobs
 GET  /api/v1/publishing/jobs/{job_id}/articles
 ```
 
+
+Запуск админки через npm:
+
+```bash
+cd admin
+npm start
+```
+
+По умолчанию админка будет доступна на `http://127.0.0.1:5173`. Если нужно открыть её с другого устройства в локальной сети, запусти так:
+
+```bash
+cd admin
+HOST=0.0.0.0 PORT=5173 npm start
+```
+
+После запуска укажи в форме `Server URL` адрес API, например `http://SERVER_IP:8080`, и Bearer token из `.env`.
+
 Минимальный сценарий:
 
-1. Открой `admin/publishing-admin.html` локально в браузере.
+1. Запусти админку: `cd admin && npm start`, затем открой `http://127.0.0.1:5173`.
 2. Укажи URL сервера и Bearer token.
 3. Сохрани RouterAI key, модели и общие ограничения.
 4. Добавь WordPress-сайты с Application Password и ID категорий.
