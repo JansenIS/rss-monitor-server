@@ -127,6 +127,34 @@ function buildNetworkErrorMessage(error, url) {
   return `Ошибка сети: ${error?.message || error}\n\n${hints.map(item => `- ${item}`).join('\n')}`;
 }
 
+
+function buildHttpErrorHint(status, url, proxiedUrl, apiTarget) {
+  if (status === 401 || status === 403) {
+    return '\n\nПодсказка: сервер ответил, но токен не принят. Проверьте Bearer token из .env (API_TOKEN) и отсутствие лишних пробелов.';
+  }
+
+  if (status !== 404) {
+    return '';
+  }
+
+  const hints = [
+    'Проверьте Server URL: укажите только origin API/админки, например http://SERVER_IP:8080 или http://SERVER_IP:5173, без /api и /api/v1.',
+  ];
+
+  if (proxiedUrl) {
+    hints.push(`Админка на 5173 проксировала запрос в: ${proxiedUrl}`);
+    hints.push(`Если это не FastAPI-сервер rss-monitor-server, перезапустите админку с правильным API_TARGET, например: API_TARGET=http://SERVER_IP:8080 PORT=5173 npm start`);
+  } else if (apiTarget) {
+    hints.push(`Прокси админки настроен на API_TARGET=${apiTarget}. Проверьте, что там запущен FastAPI этого проекта.`);
+  }
+
+  if (url.endsWith('/api/v1/health')) {
+    hints.push('Откройте напрямую http://SERVER_IP:8080/api/v1/health: если там тоже {"detail":"Not Found"}, значит на порту 8080 запущено не это API или старая версия сервера.');
+  }
+
+  return `\n\nПодсказка:\n- ${hints.join('\n- ')}`;
+}
+
 async function fetchApi(url, options) {
   try {
     return await fetch(url, options);
@@ -154,9 +182,9 @@ async function api(path, opts = {}) {
   }
   if (!response.ok) {
     const message = typeof body === 'string' ? body : JSON.stringify(body);
-    const hint = response.status === 404
-      ? '\n\nПодсказка: проверьте Server URL. Укажите только origin API/админки, например http://SERVER_IP:8080 или http://SERVER_IP:5173, без /api и /api/v1.'
-      : '';
+    const proxiedUrl = response.headers.get('x-admin-proxied-url');
+    const apiTarget = response.headers.get('x-admin-api-target');
+    const hint = buildHttpErrorHint(response.status, url, proxiedUrl, apiTarget);
     throw new Error(`${message}${hint}`);
   }
   return body;

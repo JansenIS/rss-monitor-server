@@ -42,7 +42,11 @@ function proxyApi(request, response) {
       host: target.host,
     },
   }, proxyResponse => {
-    response.writeHead(proxyResponse.statusCode || 502, proxyResponse.headers);
+    response.writeHead(proxyResponse.statusCode || 502, {
+      ...proxyResponse.headers,
+      'x-admin-api-target': apiTarget,
+      'x-admin-proxied-url': target.toString(),
+    });
     proxyResponse.pipe(response);
   });
 
