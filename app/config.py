@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     # В Docker Compose имя PostgreSQL-сервиса — postgres. localhost внутри контейнера означает сам контейнер api/worker.
     database_url: str = 'postgresql+psycopg2://rss_monitor:change_me@postgres:5432/rss_monitor'
     api_token: str = 'change_this_to_a_long_random_token'
+    # Allow the standalone browser admin page to call the API from file:// or another origin.
+    api_cors_origins: list[str] = ['*']
 
     fetch_concurrency: int = 40
     fetch_timeout_seconds: int = 15

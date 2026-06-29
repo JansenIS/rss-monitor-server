@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 import orjson
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, ORJSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -34,6 +35,13 @@ from .utils import now_utc, parse_datetime_any
 from .publishing import build_articles_snapshot, build_retrospective_snapshot, get_or_create_settings, iter_days, select_recent_articles
 
 app = FastAPI(title='Local Media Monitor RSS Server', default_response_class=ORJSONResponse)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.api_cors_origins,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
 
 
 @app.on_event('startup')
