@@ -1,12 +1,15 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '5173', 10);
+const apiTarget = process.env.API_TARGET || 'http://127.0.0.1:8080';
 
 const mimeTypes = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -28,7 +31,36 @@ function safePath(requestUrl) {
   return resolved;
 }
 
+
+function proxyApi(request, response) {
+  const target = new URL(request.url || '/', apiTarget);
+  const client = target.protocol === 'https:' ? httpsRequest : httpRequest;
+  const proxyRequest = client(target, {
+    method: request.method,
+    headers: {
+      ...request.headers,
+      host: target.host,
+    },
+  }, proxyResponse => {
+    response.writeHead(proxyResponse.statusCode || 502, proxyResponse.headers);
+    proxyResponse.pipe(response);
+  });
+
+  proxyRequest.on('error', error => {
+    response.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end(`API proxy error: ${error.message}`);
+  });
+
+  request.pipe(proxyRequest);
+}
+
 const server = createServer(async (request, response) => {
+  const requestUrl = new URL(request.url || '/', `http://${host}:${port}`);
+  if (requestUrl.pathname.startsWith('/api/')) {
+    proxyApi(request, response);
+    return;
+  }
+
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     response.writeHead(405, { Allow: 'GET, HEAD' });
     response.end('Method Not Allowed');
@@ -66,5 +98,6 @@ const server = createServer(async (request, response) => {
 server.listen(port, host, () => {
   const displayHost = host === '0.0.0.0' ? 'SERVER_IP' : host;
   console.log(`Publishing admin is running: http://${displayHost}:${port}`);
+  console.log(`Proxying /api/* requests to ${apiTarget}`);
   console.log('Listening on all network interfaces by default. Set HOST=127.0.0.1 to restrict access to this machine only.');
 });
