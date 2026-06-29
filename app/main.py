@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import SessionLocal, init_db
 from .importer import import_sources_payload, import_tauri_transfer_payload
-from .models import Article, FetchCommand, FetchRun, FetchSourceLog, Source
+from .models import Article, FetchCommand, FetchRun, FetchSourceLog, PublishedArticle, PublishingSettings, PublishJob, Source, WordPressSite
 from .schemas import (
     ArticleOut,
     ArticlesPage,
@@ -22,8 +22,16 @@ from .schemas import (
     StartRunRequest,
     StartRunResponse,
     SyncArticlesOut,
+    PublishedArticleOut,
+    PublishingSettingsIn,
+    PublishingSettingsOut,
+    PublishJobOut,
+    PublishJobRequest,
+    WordPressSiteIn,
+    WordPressSiteOut,
 )
 from .utils import now_utc, parse_datetime_any
+from .publishing import build_articles_snapshot, build_retrospective_snapshot, get_or_create_settings, iter_days, select_recent_articles
 
 app = FastAPI(title='Local Media Monitor RSS Server', default_response_class=ORJSONResponse)
 
@@ -306,3 +314,142 @@ def export_articles_ndjson(
             yield orjson.dumps(data) + b'\n'
 
     return StreamingResponse(gen(), media_type='application/x-ndjson')
+
+
+def _settings_out(settings_obj: PublishingSettings) -> PublishingSettingsOut:
+    data = PublishingSettingsOut.model_validate(settings_obj).model_dump()
+    saved = bool(settings_obj.routerai_api_key)
+    data['routerai_api_key_saved'] = saved
+    data['routerai_api_key'] = '********' if saved else None
+    return PublishingSettingsOut(**data)
+
+
+@app.get('/api/v1/publishing/settings', response_model=PublishingSettingsOut)
+def get_publishing_settings(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    return _settings_out(get_or_create_settings(db))
+
+
+@app.put('/api/v1/publishing/settings', response_model=PublishingSettingsOut)
+def update_publishing_settings(payload: PublishingSettingsIn, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    settings_obj = get_or_create_settings(db)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == 'routerai_api_key' and (value is None or value == '' or value == '********'):
+            continue
+        setattr(settings_obj, field, value)
+    if not settings_obj.routerai_base_url:
+        settings_obj.routerai_base_url = 'https://routerai.ru/api/v1'
+    db.commit()
+    db.refresh(settings_obj)
+    return _settings_out(settings_obj)
+
+
+def _site_out(site: WordPressSite) -> WordPressSiteOut:
+    data = WordPressSiteOut.model_validate(site).model_dump()
+    saved = bool(site.app_password)
+    data['app_password_saved'] = saved
+    data['app_password'] = '********' if saved else None
+    return WordPressSiteOut(**data)
+
+
+@app.get('/api/v1/publishing/sites', response_model=list[WordPressSiteOut])
+def list_wordpress_sites(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    return [_site_out(site) for site in db.execute(select(WordPressSite).order_by(WordPressSite.id.asc())).scalars().all()]
+
+
+@app.post('/api/v1/publishing/sites', response_model=WordPressSiteOut)
+def create_wordpress_site(payload: WordPressSiteIn, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    site = WordPressSite(**payload.model_dump())
+    db.add(site)
+    db.commit()
+    db.refresh(site)
+    return _site_out(site)
+
+
+@app.put('/api/v1/publishing/sites/{site_id}', response_model=WordPressSiteOut)
+def update_wordpress_site(site_id: int, payload: WordPressSiteIn, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    site = db.get(WordPressSite, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail='Site not found')
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == 'app_password' and (value is None or value == '' or value == '********'):
+            continue
+        setattr(site, field, value)
+    db.commit()
+    db.refresh(site)
+    return _site_out(site)
+
+
+@app.delete('/api/v1/publishing/sites/{site_id}')
+def delete_wordpress_site(site_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    site = db.get(WordPressSite, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail='Site not found')
+    db.delete(site)
+    db.commit()
+    return {'status': 'deleted'}
+
+
+@app.get('/api/v1/publishing/recent-news')
+def recent_news_for_country(country_code: str, hours_back: int = Query(1, ge=1, le=24), db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    articles = select_recent_articles(db, country_code, hours_back)
+    return {'country_code': country_code.upper(), 'hours_back': hours_back, 'total': len(articles), 'articles': build_articles_snapshot(articles)}
+
+
+@app.post('/api/v1/publishing/jobs', response_model=PublishJobOut)
+def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    settings_obj = get_or_create_settings(db)
+    period_start = None
+    period_end = None
+    planned_articles_per_site = None
+
+    if payload.pipeline_type == 'retrospective':
+        if not payload.period_start or not payload.period_end or not payload.articles_per_day:
+            raise HTTPException(status_code=400, detail='period_start, period_end and articles_per_day are required for retrospective jobs')
+        try:
+            days = iter_days(payload.period_start, payload.period_end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        snapshot = build_retrospective_snapshot(db, payload.country_code, payload.period_start, payload.period_end, payload.articles_per_day)
+        empty_days = [day['date'] for day in snapshot['days'] if not day['articles']]
+        if empty_days:
+            raise HTTPException(status_code=400, detail=f'No archived articles found for days: {", ".join(empty_days[:10])}')
+        period_start = datetime.combine(payload.period_start, datetime.min.time(), tzinfo=timezone.utc)
+        period_end = datetime.combine(payload.period_end, datetime.max.time(), tzinfo=timezone.utc)
+        planned_articles_per_site = len(days) * payload.articles_per_day
+    else:
+        articles = select_recent_articles(db, payload.country_code, payload.hours_back)
+        if not articles:
+            raise HTTPException(status_code=400, detail='No recent articles found for selected country and period')
+        snapshot = build_articles_snapshot(articles)
+
+    job = PublishJob(
+        country_code=payload.country_code.upper(),
+        country_name=payload.country_name,
+        target_language=payload.target_language or settings_obj.default_language,
+        hours_back=payload.hours_back,
+        pipeline_type=payload.pipeline_type,
+        period_start=period_start,
+        period_end=period_end,
+        articles_per_day=payload.articles_per_day,
+        planned_articles_per_site=planned_articles_per_site,
+        site_limit=payload.site_limit,
+        rewrite_model=payload.rewrite_model or settings_obj.rewrite_model,
+        image_model=payload.image_model or settings_obj.image_model,
+        stop_words=payload.stop_words or settings_obj.stop_words,
+        specificity=payload.specificity or settings_obj.specificity,
+        articles_snapshot=snapshot,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@app.get('/api/v1/publishing/jobs', response_model=list[PublishJobOut])
+def list_publish_jobs(limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    return list(db.execute(select(PublishJob).order_by(PublishJob.created_at.desc()).limit(limit)).scalars().all())
+
+
+@app.get('/api/v1/publishing/jobs/{job_id}/articles', response_model=list[PublishedArticleOut])
+def list_published_articles(job_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    return list(db.execute(select(PublishedArticle).where(PublishedArticle.job_id == job_id).order_by(PublishedArticle.id.asc())).scalars().all())

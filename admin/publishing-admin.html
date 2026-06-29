@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RSS Publishing Admin</title>
+  <style>
+    body{font-family:Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px;line-height:1.45} fieldset{margin:16px 0;padding:16px;border:1px solid #ddd;border-radius:8px} label{display:block;margin:8px 0 4px} input,textarea,select{width:100%;box-sizing:border-box;padding:8px} button{margin-top:10px;padding:10px 14px;cursor:pointer}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.site{border:1px solid #eee;border-radius:8px;padding:12px;margin:8px 0} pre{background:#111;color:#eee;padding:12px;overflow:auto;border-radius:8px}
+  </style>
+</head>
+<body>
+  <h1>Headless RSS → RouterAI → WordPress</h1>
+  <p>Этот файл запускается на пользовательском устройстве. Сервер остаётся без графической админки.</p>
+
+  <fieldset>
+    <legend>Подключение к серверу</legend>
+    <div class="row"><div><label>Server URL</label><input id="server" placeholder="http://SERVER_IP:8080"></div><div><label>Bearer token</label><input id="token" type="password"></div></div>
+    <button onclick="saveLocal()">Сохранить локально в браузере</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>RouterAI и общие настройки</legend>
+    <div class="row"><div><label>RouterAI key (сохраняется на сервер)</label><input id="routerKey" type="password"></div><div><label>RouterAI base URL</label><input id="routerBase" value="https://routerai.ru/api/v1"></div></div>
+    <div class="row"><div><label>LLM модель рерайта</label><input id="rewriteModel" placeholder="например gpt-4o-mini"></div><div><label>Модель изображений</label><input id="imageModel" placeholder="например dall-e-3 / image model"></div></div>
+    <label>Язык по умолчанию</label><input id="defaultLanguage" value="ru">
+    <label>Стоп-слова</label><textarea id="stopWords"></textarea>
+    <label>Специфика/тональность</label><textarea id="specificity"></textarea>
+    <button onclick="loadSettings()">Загрузить</button> <button onclick="saveSettings()">Сохранить на сервер</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>WordPress сайты</legend>
+    <div id="sites"></div>
+    <h3>Добавить / обновить сайт</h3>
+    <input id="siteId" type="hidden">
+    <div class="row"><div><label>Название</label><input id="siteName"></div><div><label>WordPress URL</label><input id="siteUrl" placeholder="https://example.com"></div></div>
+    <div class="row"><div><label>Username</label><input id="siteUser"></div><div><label>Application password</label><input id="sitePass" type="password"></div></div>
+    <div class="row"><div><label>Категории (ID через запятую)</label><input id="siteCategories"></div><div><label>Статус</label><select id="siteStatus"><option>draft</option><option>publish</option><option>pending</option></select></div></div>
+    <div class="row"><div><label>Язык сайта</label><input id="siteLanguage"></div><div><label>Активен</label><select id="siteActive"><option value="true">true</option><option value="false">false</option></select></div></div>
+    <div class="row"><div><label>Лимит генераций в час</label><input id="siteLimitHour" type="number" min="1"></div><div><label>Лимит генераций за 24 часа</label><input id="siteLimitDay" type="number" min="1"></div></div>
+    <label>Специфика сайта</label><textarea id="siteSpecificity"></textarea>
+    <button onclick="saveSite()">Сохранить сайт</button> <button onclick="clearSiteForm()">Очистить</button> <button onclick="loadSites()">Обновить список</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>Запуск публикации</legend>
+    <div class="row"><div><label>Код страны</label><input id="countryCode" placeholder="SC"></div><div><label>Название страны (обязательно попадёт в промпт изображения)</label><input id="countryName" placeholder="Seychelles"></div></div>
+    <div class="row"><div><label>Язык статьи</label><input id="targetLanguage" placeholder="ru"></div><div><label>Количество сайтов</label><input id="siteLimit" type="number" min="1"></div></div>
+    <div class="row"><div><label>Тип пайплайна</label><select id="pipelineType"><option value="recent">Последний период</option><option value="retrospective">Ретроспективный архив</option></select></div><div><label>Период новостей, часов</label><input id="hoursBack" type="number" min="1" max="24" value="1"></div></div>
+    <div class="row"><div><label>Начало архива</label><input id="periodStart" type="date"></div><div><label>Конец архива</label><input id="periodEnd" type="date"></div></div>
+    <label>Статей в день на каждый сайт</label><input id="articlesPerDay" type="number" min="1" max="100" placeholder="8">
+    <button onclick="previewNews()">Показать новости</button> <button onclick="createJob()">Создать задание</button>
+  </fieldset>
+
+  <fieldset><legend>Задания</legend><button onclick="loadJobs()">Обновить задания</button><div id="jobs"></div></fieldset>
+  <pre id="log"></pre>
+
+<script>
+const $ = id => document.getElementById(id);
+function headers(){return {'Content-Type':'application/json','Authorization':'Bearer '+$('token').value}}
+function api(path, opts={}){return fetch($('server').value.replace(/\/$/,'')+path,{...opts,headers:{...headers(),...(opts.headers||{})}}).then(async r=>{const t=await r.text();let j;try{j=JSON.parse(t)}catch{j=t} if(!r.ok) throw new Error(JSON.stringify(j)); return j})}
+function log(x){$('log').textContent=typeof x==='string'?x:JSON.stringify(x,null,2)}
+function saveLocal(){localStorage.rssPubServer=$('server').value;localStorage.rssPubToken=$('token').value;log('Сохранено локально')}
+function restoreLocal(){ $('server').value=localStorage.rssPubServer||''; $('token').value=localStorage.rssPubToken||'' }
+async function loadSettings(){const s=await api('/api/v1/publishing/settings'); $('routerKey').value=s.routerai_api_key||'';$('routerBase').value=s.routerai_base_url||'';$('rewriteModel').value=s.rewrite_model||'';$('imageModel').value=s.image_model||'';$('defaultLanguage').value=s.default_language||'ru';$('stopWords').value=s.stop_words||'';$('specificity').value=s.specificity||'';log(s)}
+async function saveSettings(){log(await api('/api/v1/publishing/settings',{method:'PUT',body:JSON.stringify({routerai_api_key:$('routerKey').value,routerai_base_url:$('routerBase').value,rewrite_model:$('rewriteModel').value,image_model:$('imageModel').value,default_language:$('defaultLanguage').value,stop_words:$('stopWords').value,specificity:$('specificity').value})}))}
+async function loadSites(){const sites=await api('/api/v1/publishing/sites'); $('sites').innerHTML=sites.map(s=>`<div class="site"><b>${s.name}</b> ${s.base_url} [${s.is_active?'active':'off'}]<br>categories: ${(s.categories||[]).join(', ')}<br><button onclick='editSite(${JSON.stringify(s).replaceAll("'",'&#39;')})'>Редактировать</button></div>`).join(''); log(sites)}
+function editSite(s){$('siteId').value=s.id;$('siteName').value=s.name;$('siteUrl').value=s.base_url;$('siteUser').value=s.username||'';$('sitePass').value=s.app_password||'';$('siteStatus').value=s.default_status||'draft';$('siteCategories').value=(s.categories||[]).join(',');$('siteLanguage').value=s.language||'';$('siteSpecificity').value=s.specificity||'';$('siteLimitHour').value=s.generation_limit_per_hour||'';$('siteLimitDay').value=s.generation_limit_per_24h||'';$('siteActive').value=String(s.is_active)}
+function clearSiteForm(){['siteId','siteName','siteUrl','siteUser','sitePass','siteCategories','siteLanguage','siteSpecificity','siteLimitHour','siteLimitDay'].forEach(id=>$(id).value='')}
+async function saveSite(){const body={name:$('siteName').value,base_url:$('siteUrl').value,username:$('siteUser').value,app_password:$('sitePass').value,default_status:$('siteStatus').value,categories:$('siteCategories').value.split(',').map(x=>parseInt(x.trim())).filter(Boolean),language:$('siteLanguage').value,specificity:$('siteSpecificity').value,generation_limit_per_hour:$('siteLimitHour').value?parseInt($('siteLimitHour').value):null,generation_limit_per_24h:$('siteLimitDay').value?parseInt($('siteLimitDay').value):null,is_active:$('siteActive').value==='true'}; const id=$('siteId').value; log(await api('/api/v1/publishing/sites'+(id?'/'+id:''),{method:id?'PUT':'POST',body:JSON.stringify(body)})); await loadSites()}
+async function previewNews(){log(await api(`/api/v1/publishing/recent-news?country_code=${encodeURIComponent($('countryCode').value)}&hours_back=${$('hoursBack').value}`))}
+async function createJob(){const body={pipeline_type:$('pipelineType').value,country_code:$('countryCode').value,country_name:$('countryName').value,target_language:$('targetLanguage').value,hours_back:parseInt($('hoursBack').value),period_start:$('periodStart').value||null,period_end:$('periodEnd').value||null,articles_per_day:$('articlesPerDay').value?parseInt($('articlesPerDay').value):null,site_limit:$('siteLimit').value?parseInt($('siteLimit').value):null}; log(await api('/api/v1/publishing/jobs',{method:'POST',body:JSON.stringify(body)})); await loadJobs()}
+async function loadJobs(){const jobs=await api('/api/v1/publishing/jobs'); $('jobs').innerHTML=jobs.map(j=>`<div class="site"><b>#${j.id}</b> ${j.status} ${j.country_code} → ${j.target_language}<br>planned/site: ${j.planned_articles_per_site||'-'}<br>${j.error_text||''}<br><button onclick="api('/api/v1/publishing/jobs/${j.id}/articles').then(log)">Публикации</button></div>`).join(''); log(jobs)}
+restoreLocal();
+</script>
+</body></html>
