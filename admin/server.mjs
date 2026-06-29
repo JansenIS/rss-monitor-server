@@ -5,7 +5,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const host = process.env.HOST || '127.0.0.1';
+const host = process.env.HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.PORT || '5173', 10);
 
 const mimeTypes = new Map([
@@ -64,6 +64,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Publishing admin is running: http://${host}:${port}`);
-  console.log('Set HOST=0.0.0.0 if you need access from another device on your LAN.');
+  const displayHost = host === '0.0.0.0' ? 'SERVER_IP' : host;
+  console.log(`Publishing admin is running: http://${displayHost}:${port}`);
+  console.log('Listening on all network interfaces by default. Set HOST=127.0.0.1 to restrict access to this machine only.');
 });

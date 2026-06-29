@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node server.mjs"
+    "dev": "node server.mjs",
+    "start:local": "HOST=127.0.0.1 node server.mjs"
   },
   "engines": {
     "node": ">=18"
