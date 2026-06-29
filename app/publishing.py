@@ -14,6 +14,7 @@ from .models import Article, PublishedArticle, PublishingSettings, PublishJob, W
 from .utils import now_utc
 
 DEFAULT_ROUTERAI_BASE_URL = 'https://routerai.ru/api/v1'
+DEFAULT_ROUTERAI_IMAGE_MODEL = 'openai/gpt-image-1'
 NATURE_STEREOTYPE_BAN = (
     'Do not include stereotypical nature or safari imagery: no rhinos, parrots, '
     'crocodiles, jungles, generic wildlife, or unrelated exotic landscapes.'
@@ -202,7 +203,7 @@ async def routerai_chat(base_url: str, api_key: str, model: str, messages: list[
 
 async def routerai_image(base_url: str, api_key: str, model: str, prompt: str) -> bytes | None:
     async with httpx.AsyncClient(timeout=180) as client:
-        resp = await client.post(f'{base_url.rstrip("/")}/images/generations', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1, 'size': '1024x1024'})
+        resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
         resp.raise_for_status()
         data = resp.json()
         item = data.get('data', [{}])[0]

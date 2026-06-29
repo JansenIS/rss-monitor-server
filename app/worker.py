@@ -250,7 +250,7 @@ async def main_loop() -> None:
 
 async def process_publish_jobs_once() -> bool:
     from .models import PublishedArticle, PublishingSettings, PublishJob, WordPressSite
-    from .publishing import build_image_prompt, build_rewrite_messages, get_or_create_settings, mark_source_articles_used, published_slot_exists, routerai_chat, routerai_image, site_generation_delay, source_ids_from_snapshot, upload_to_wordpress
+    from .publishing import DEFAULT_ROUTERAI_IMAGE_MODEL, build_image_prompt, build_rewrite_messages, get_or_create_settings, mark_source_articles_used, published_slot_exists, routerai_chat, routerai_image, site_generation_delay, source_ids_from_snapshot, upload_to_wordpress
 
     with SessionLocal() as db:
         job = db.execute(select(PublishJob).where((PublishJob.status == 'queued') | ((PublishJob.status == 'rate_limited') & ((PublishJob.retry_after.is_(None)) | (PublishJob.retry_after <= now_utc())))).order_by(PublishJob.created_at.asc()).limit(1)).scalar_one_or_none()
@@ -312,7 +312,7 @@ async def process_publish_jobs_once() -> bool:
             )
             title = article.get('title') or 'Generated article'
             image_prompt = build_image_prompt(title, job.country_name or job.country_code, job.country_code)
-            image = await routerai_image(base_url, api_key, job.image_model or 'dall-e-3', image_prompt)
+            image = await routerai_image(base_url, api_key, job.image_model or DEFAULT_ROUTERAI_IMAGE_MODEL, image_prompt)
             wp = await upload_to_wordpress(site, article, image, image_prompt, publish_at=scheduled_for)
             with SessionLocal() as db:
                 row = db.get(PublishedArticle, row_id)

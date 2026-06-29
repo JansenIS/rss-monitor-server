@@ -80,13 +80,49 @@ docker compose logs -f worker
 docker compose logs -f postgres
 ```
 
-## 10. Backup
+
+## 10. Обновление и перезапуск после изменения кода
+
+Если админка отвечает `{"detail":"Not Found"}` на `/api/v1/publishing/settings`, сначала обнови файлы проекта на сервере и перезапусти API. Для стандартного Docker Compose деплоя:
+
+```bash
+cd /opt/lmm-rss-monitor
+# Если каталог является git-клоном, сначала подтяни свежий код:
+# git pull
+docker compose up -d --build api worker
+docker compose ps
+TOKEN=$(grep API_TOKEN .env | cut -d= -f2)
+curl -i -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/publishing/settings
+```
+
+Если сразу после пересборки `curl` пишет `Recv failure: Connection reset by peer`, подожди, пока `docker compose ps` покажет `api` как `healthy`, и проверь логи:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 api
+```
+
+Если установлен systemd-unit из этого репозитория, можно перезапустить весь Docker Compose стек через systemd:
+
+```bash
+sudo systemctl restart lmm-rss-monitor.service
+sudo systemctl status lmm-rss-monitor.service
+```
+
+Если FastAPI запущен вручную без Docker/systemd, останови старый процесс и запусти его заново из каталога проекта:
+
+```bash
+cd /opt/lmm-rss-monitor
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+## 11. Backup
 
 ```bash
 sudo bash scripts/linux/backup.sh /opt/lmm-rss-monitor
 ```
 
-## 11. Restore
+## 12. Restore
 
 ```bash
 sudo bash scripts/linux/restore.sh /opt/lmm-rss-monitor /opt/lmm-rss-monitor/backups/rss_monitor_YYYYMMDD-HHMMSS.sql.gz

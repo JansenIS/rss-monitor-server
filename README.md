@@ -229,7 +229,18 @@ GET  /api/v1/publishing/jobs/{job_id}/articles
 http://SERVER_IP:8080/admin
 ```
 
-При таком запуске поле `Server URL` заполнится автоматически текущим origin (`http://SERVER_IP:8080`). Нажми `Проверить API`, чтобы быстро проверить доступность `/api/v1/health` и токен.
+При таком запуске поле `Server URL` заполнится автоматически текущим origin (`http://SERVER_IP:8080`). Нажми `Проверить API`, чтобы быстро проверить доступность `/api/v1/health`, `/api/v1/publishing/settings` и токен. Если `/api/v1/health` отвечает, но `/api/v1/publishing/settings` возвращает `{"detail":"Not Found"}`, на порту 8080, скорее всего, запущена старая версия API без publishing endpoints: обнови код на сервере и перезапусти FastAPI/контейнер/systemd-сервис.
+
+Для стандартного деплоя в `/opt/lmm-rss-monitor` перезапусти API/worker так:
+
+```bash
+cd /opt/lmm-rss-monitor
+docker compose up -d --build api worker
+TOKEN=$(grep API_TOKEN .env | cut -d= -f2)
+curl -i -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/publishing/settings
+```
+
+Если включён systemd-unit проекта, используй `sudo systemctl restart lmm-rss-monitor.service`.
 
 Альтернативный запуск админки через npm:
 
@@ -247,7 +258,7 @@ PORT=5173 npm start
 
 Если нужно ограничить доступ только текущей машиной, запусти `HOST=127.0.0.1 npm run start:local`.
 
-При открытии `http://SERVER_IP:5173` поле `Server URL` автоматически подставит текущий адрес админки: `http://SERVER_IP:5173`. Встроенный npm-сервер проксирует запросы `/api/*` в FastAPI по адресу `API_TARGET` (по умолчанию `http://127.0.0.1:8080`), поэтому браузеру не нужно напрямую открывать порт 8080. Если FastAPI находится на другом адресе, запусти админку так: `API_TARGET=http://API_HOST:8080 PORT=5173 npm start`. Проверь Bearer token из `.env` и нажми `Проверить API`.
+При открытии `http://SERVER_IP:5173` поле `Server URL` автоматически подставит текущий адрес админки: `http://SERVER_IP:5173`. Встроенный npm-сервер проксирует запросы `/api/*` в FastAPI по адресу `API_TARGET` (по умолчанию `http://127.0.0.1:8080`), поэтому браузеру не нужно напрямую открывать порт 8080. Если FastAPI находится на другом адресе, запусти админку так: `API_TARGET=http://API_HOST:8080 PORT=5173 npm start`. Здесь `SERVER_IP` и `API_HOST` — это примеры-плейсхолдеры: замени их на реальный IP или DNS-имя сервера (например, `API_TARGET=http://192.168.1.50:8080 PORT=5173 npm start`). Не запускай команду с буквальным `SERVER_IP`, иначе Node.js попытается найти DNS-имя `server_ip` и прокси вернёт `getaddrinfo EAI_AGAIN server_ip`. Если FastAPI запущен на той же машине, обычно достаточно `PORT=5173 npm start` без `API_TARGET` или явно `API_TARGET=http://127.0.0.1:8080 PORT=5173 npm start`. Проверь Bearer token из `.env` и нажми `Проверить API`.
 
 Минимальный сценарий:
 
@@ -257,6 +268,9 @@ PORT=5173 npm start
 4. Добавь WordPress-сайты с Application Password и ID категорий.
 5. Создай publishing job по стране, языку и количеству сайтов.
 6. Worker заберёт задание из очереди, создаст уникальные статьи и выгрузит их в WordPress.
+
+
+RouterAI image generation в этом проекте отправляется в endpoint `/images` относительно `RouterAI base URL` (по умолчанию итоговый URL: `https://routerai.ru/api/v1/images`) и использует модель `openai/gpt-image-1`, если в настройках не указана другая модель.
 
 ### Ретроспективный publishing по архиву
 

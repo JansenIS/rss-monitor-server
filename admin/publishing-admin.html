@@ -21,7 +21,7 @@
   <fieldset>
     <legend>RouterAI и общие настройки</legend>
     <div class="row"><div><label>RouterAI key (сохраняется на сервер)</label><input id="routerKey" type="password"></div><div><label>RouterAI base URL</label><input id="routerBase" value="https://routerai.ru/api/v1"></div></div>
-    <div class="row"><div><label>LLM модель рерайта</label><input id="rewriteModel" placeholder="например gpt-4o-mini"></div><div><label>Модель изображений</label><input id="imageModel" placeholder="например dall-e-3 / image model"></div></div>
+    <div class="row"><div><label>LLM модель рерайта</label><input id="rewriteModel" placeholder="например gpt-4o-mini"></div><div><label>Модель изображений</label><input id="imageModel" placeholder="например openai/gpt-image-1"></div></div>
     <label>Язык по умолчанию</label><select id="defaultLanguage"><option value="en">English</option><option value="fr">French</option></select>
     <label>Стоп-слова</label><textarea id="stopWords"></textarea>
     <label>Специфика/тональность</label><textarea id="specificity"></textarea>
@@ -128,6 +128,14 @@ function buildNetworkErrorMessage(error, url) {
 }
 
 
+function isPublishingApiUrl(url) {
+  try {
+    return new URL(url).pathname.startsWith('/api/v1/publishing/');
+  } catch {
+    return url.includes('/api/v1/publishing/');
+  }
+}
+
 function buildHttpErrorHint(status, url, proxiedUrl, apiTarget) {
   if (status === 401 || status === 403) {
     return '\n\nПодсказка: сервер ответил, но токен не принят. Проверьте Bearer token из .env (API_TOKEN) и отсутствие лишних пробелов.';
@@ -143,9 +151,14 @@ function buildHttpErrorHint(status, url, proxiedUrl, apiTarget) {
 
   if (proxiedUrl) {
     hints.push(`Админка на 5173 проксировала запрос в: ${proxiedUrl}`);
-    hints.push(`Если это не FastAPI-сервер rss-monitor-server, перезапустите админку с правильным API_TARGET, например: API_TARGET=http://SERVER_IP:8080 PORT=5173 npm start`);
+    hints.push('Если это не FastAPI-сервер rss-monitor-server, перезапустите админку с правильным API_TARGET, например: API_TARGET=http://REAL_SERVER_IP:8080 PORT=5173 npm start');
   } else if (apiTarget) {
     hints.push(`Прокси админки настроен на API_TARGET=${apiTarget}. Проверьте, что там запущен FastAPI этого проекта.`);
+  }
+
+  if (isPublishingApiUrl(proxiedUrl || url)) {
+    hints.push('Эндпоинт publishing не найден. Чаще всего на 8080 запущена старая версия API без RouterAI → WordPress publishing routes.');
+    hints.push('На сервере API обновите код и перезапустите FastAPI/контейнер/systemd-сервис, затем проверьте /docs или /api/v1/publishing/settings.');
   }
 
   if (url.endsWith('/api/v1/health')) {
@@ -222,7 +235,8 @@ function restoreLocal() {
 
 async function checkApi() {
   const health = await api('/api/v1/health');
-  log({ ok: true, health });
+  const publishingSettings = await api('/api/v1/publishing/settings');
+  log({ ok: true, health, publishingSettings });
 }
 
 async function loadSettings() {
