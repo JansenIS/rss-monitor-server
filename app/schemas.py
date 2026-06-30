@@ -147,6 +147,7 @@ class WordPressSiteIn(BaseModel):
     categories: list[WordPressCategory] = Field(default_factory=list)
     language: str | None = None
     specificity: str | None = None
+    country_codes: list[str] = Field(default_factory=list)
     generation_limit_per_hour: int | None = Field(default=None, ge=1)
     generation_limit_per_24h: int | None = Field(default=None, ge=1)
     is_active: bool = True
@@ -174,6 +175,15 @@ class WordPressSiteIn(BaseModel):
                     normalized.append({'id': int(category_id), 'name': str(item.get('name') or category_id)})
         return normalized
 
+    @field_validator('country_codes', mode='before')
+    @classmethod
+    def normalize_country_codes(cls, value):
+        if value is None or value == '':
+            return []
+        if isinstance(value, str):
+            value = [item.strip() for item in value.split(',')]
+        return [str(item).strip().upper() for item in value if str(item).strip()]
+
 
 class WordPressSiteOut(WordPressSiteIn):
     id: int
@@ -184,7 +194,7 @@ class WordPressSiteOut(WordPressSiteIn):
 
 
 class PublishJobRequest(BaseModel):
-    pipeline_type: str = Field(default='recent', pattern='^(recent|retrospective)$')
+    pipeline_type: str = Field(default='recent', pattern='^(recent|retrospective|continuous)$')
     country_code: str
     country_name: str | None = None
     target_language: str | None = None

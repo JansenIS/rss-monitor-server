@@ -37,7 +37,8 @@
     <div class="row"><div><label>Username</label><input id="siteUser"></div><div><label>Application password</label><input id="sitePass" type="password"></div></div>
     <div class="row"><div><label>Категории (каждая строка: ID: название)</label><textarea id="siteCategories" placeholder="12: Politics
 34: Economy"></textarea></div><div><label>Статус</label><select id="siteStatus"><option>draft</option><option>publish</option><option>pending</option></select></div></div>
-    <div class="row"><div><label>Язык сайта</label><select id="siteLanguage"><option value="">Использовать язык задания</option><option value="en">English</option><option value="fr">French</option></select></div><div><label>Активен</label><select id="siteActive"><option value="true">true</option><option value="false">false</option></select></div></div>
+    <div class="row"><div><label>Страны сайта из RSS мониторинга (коды через запятую)</label><input id="siteCountries" list="countriesList" placeholder="SC, CD"></div><div><label>Язык сайта</label><select id="siteLanguage"><option value="">Использовать язык задания</option><option value="en">English</option><option value="fr">French</option></select></div></div><div class="row"><div><label>Активен</label><select id="siteActive"><option value="true">true</option><option value="false">false</option></select></div><div></div></div>
+    <datalist id="countriesList"></datalist>
     <div class="row"><div><label>Лимит генераций в час</label><input id="siteLimitHour" type="number" min="1"></div><div><label>Лимит генераций за 24 часа</label><input id="siteLimitDay" type="number" min="1"></div></div>
     <label>Специфика сайта</label><textarea id="siteSpecificity"></textarea>
     <button data-action="saveSite">Сохранить сайт</button> <button data-action="clearSiteForm">Очистить</button> <button data-action="loadSites">Обновить список</button> <button data-action="resetAllSiteLimits">Сбросить лимиты всех сайтов</button>
@@ -47,7 +48,7 @@
     <legend>Запуск публикации</legend>
     <div class="row"><div><label>Код страны</label><input id="countryCode" placeholder="SC"></div><div><label>Название страны (обязательно попадёт в промпт изображения)</label><input id="countryName" placeholder="Seychelles"></div></div>
     <div class="row"><div><label>Язык публикации</label><select id="targetLanguage"><option value="en">English</option><option value="fr">French</option></select></div><div><label>Количество сайтов</label><input id="siteLimit" type="number" min="1"></div></div>
-    <div class="row"><div><label>Тип пайплайна</label><select id="pipelineType"><option value="recent">Последний период</option><option value="retrospective">Ретроспективный архив</option></select></div><div><label>Период новостей, часов</label><input id="hoursBack" type="number" min="1" max="24" value="1"></div></div>
+    <div class="row"><div><label>Тип пайплайна</label><select id="pipelineType"><option value="recent">Последний период</option><option value="continuous">Постоянно каждый час</option><option value="retrospective">Ретроспективный архив</option></select></div><div><label>Период новостей, часов</label><input id="hoursBack" type="number" min="1" max="24" value="1"></div></div>
     <div class="row"><div><label>Начало архива</label><input id="periodStart" type="date"></div><div><label>Конец архива</label><input id="periodEnd" type="date"></div></div>
     <label>Статей в день на каждый сайт</label><input id="articlesPerDay" type="number" min="1" max="100" placeholder="8">
     <button data-action="previewNews">Показать новости</button> <button data-action="createJob">Создать задание</button>
@@ -280,11 +281,12 @@ function parseCategories(raw) {
 function renderSite(site) {
   const wrapper = document.createElement('div');
   wrapper.className = 'site';
-  wrapper.innerHTML = `<b></b> <span class="base-url"></span> [<span class="state"></span>]<br>categories: <span class="categories"></span><br>limits reset: <span class="limits-reset"></span><br>`;
+  wrapper.innerHTML = `<b></b> <span class="base-url"></span> [<span class="state"></span>]<br>categories: <span class="categories"></span><br>countries: <span class="countries"></span><br>limits reset: <span class="limits-reset"></span><br>`;
   wrapper.querySelector('b').textContent = site.name;
   wrapper.querySelector('.base-url').textContent = site.base_url;
   wrapper.querySelector('.state').textContent = site.is_active ? 'active' : 'off';
   wrapper.querySelector('.categories').textContent = formatCategories(site.categories);
+  wrapper.querySelector('.countries').textContent = (site.country_codes || []).join(', ') || 'all';
   wrapper.querySelector('.limits-reset').textContent = site.generation_limit_reset_at || '-';
   const editButton = document.createElement('button');
   editButton.type = 'button';
@@ -307,7 +309,19 @@ async function resetAllSiteLimits() {
   await loadSites();
 }
 
+async function loadCountries() {
+  const countries = await api('/api/v1/publishing/countries');
+  $('countriesList').replaceChildren(...countries.map(country => {
+    const option = document.createElement('option');
+    option.value = country.code;
+    option.label = country.name || country.code;
+    return option;
+  }));
+  return countries;
+}
+
 async function loadSites() {
+  await loadCountries();
   const sites = await api('/api/v1/publishing/sites');
   $('sites').replaceChildren(...sites.map(renderSite));
   log(sites);
@@ -323,6 +337,7 @@ function editSite(site) {
   $('siteCategories').value = (site.categories || []).map(category => (
     typeof category === 'object' ? `${category.id}: ${category.name}` : String(category)
   )).join('\n');
+  $('siteCountries').value = (site.country_codes || []).join(', ');
   $('siteLanguage').value = site.language || '';
   $('siteSpecificity').value = site.specificity || '';
   $('siteLimitHour').value = site.generation_limit_per_hour || '';
@@ -331,7 +346,7 @@ function editSite(site) {
 }
 
 function clearSiteForm() {
-  ['siteId', 'siteName', 'siteUrl', 'siteUser', 'sitePass', 'siteCategories', 'siteLanguage', 'siteSpecificity', 'siteLimitHour', 'siteLimitDay'].forEach(id => {
+  ['siteId', 'siteName', 'siteUrl', 'siteUser', 'sitePass', 'siteCategories', 'siteCountries', 'siteLanguage', 'siteSpecificity', 'siteLimitHour', 'siteLimitDay'].forEach(id => {
     $(id).value = '';
   });
   $('siteStatus').value = 'draft';
@@ -347,6 +362,7 @@ async function saveSite() {
     default_status: $('siteStatus').value,
     categories: parseCategories($('siteCategories').value),
     language: $('siteLanguage').value,
+    country_codes: $('siteCountries').value.split(',').map(item => item.trim().toUpperCase()).filter(Boolean),
     specificity: $('siteSpecificity').value,
     generation_limit_per_hour: $('siteLimitHour').value ? parseInt($('siteLimitHour').value, 10) : null,
     generation_limit_per_24h: $('siteLimitDay').value ? parseInt($('siteLimitDay').value, 10) : null,

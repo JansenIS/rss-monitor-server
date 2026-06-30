@@ -155,6 +155,7 @@ class WordPressSite(Base):
     categories: Mapped[list | None] = mapped_column(JSONB)
     language: Mapped[str | None] = mapped_column(String(64))
     specificity: Mapped[str | None] = mapped_column(Text)
+    country_codes: Mapped[list | None] = mapped_column(JSONB)
     generation_limit_per_hour: Mapped[int | None] = mapped_column(Integer)
     generation_limit_per_24h: Mapped[int | None] = mapped_column(Integer)
     generation_limit_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
