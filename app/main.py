@@ -8,7 +8,7 @@ import orjson
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, ORJSONResponse, StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from .config import settings
 from .db import SessionLocal, init_db
@@ -143,8 +143,6 @@ def import_sources_json(
     _: None = Depends(require_auth),
 ):
     return import_sources_payload(db, payload, include_secondary=include_secondary)
-
-
 
 
 @app.post('/api/v1/database/import', response_model=ImportResult)
@@ -396,6 +394,25 @@ def update_wordpress_site(site_id: int, payload: WordPressSiteIn, db: Session = 
     return _site_out(site)
 
 
+@app.post('/api/v1/publishing/sites/{site_id}/limits/reset', response_model=WordPressSiteOut)
+def reset_wordpress_site_limits(site_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    site = db.get(WordPressSite, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail='Site not found')
+    site.generation_limit_reset_at = now_utc()
+    db.commit()
+    db.refresh(site)
+    return _site_out(site)
+
+
+@app.post('/api/v1/publishing/limits/reset')
+def reset_all_wordpress_site_limits(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    reset_at = now_utc()
+    result = db.execute(update(WordPressSite).values(generation_limit_reset_at=reset_at))
+    db.commit()
+    return {'status': 'ok', 'reset_at': reset_at, 'sites_updated': result.rowcount or 0}
+
+
 @app.delete('/api/v1/publishing/sites/{site_id}')
 def delete_wordpress_site(site_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
     site = db.get(WordPressSite, site_id)
@@ -465,6 +482,51 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
 @app.get('/api/v1/publishing/jobs', response_model=list[PublishJobOut])
 def list_publish_jobs(limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db), _: None = Depends(require_auth)):
     return list(db.execute(select(PublishJob).order_by(PublishJob.created_at.desc()).limit(limit)).scalars().all())
+
+
+@app.post('/api/v1/publishing/jobs/{job_id}/cancel', response_model=PublishJobOut)
+def cancel_publish_job(job_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    job = db.get(PublishJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    if job.status in {'completed', 'completed_with_errors', 'failed'}:
+        raise HTTPException(status_code=400, detail=f'Job with status {job.status} cannot be canceled')
+    job.status = 'canceled'
+    job.retry_after = None
+    job.finished_at = now_utc()
+    job.error_text = 'Canceled by admin'
+    db.execute(
+        update(PublishedArticle)
+        .where(PublishedArticle.job_id == job.id)
+        .where(PublishedArticle.status.in_(['queued', 'running']))
+        .values(status='canceled', error_text='Canceled by admin')
+    )
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@app.post('/api/v1/publishing/jobs/{job_id}/restart', response_model=PublishJobOut)
+def restart_publish_job(job_id: int, db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    job = db.get(PublishJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    if job.status == 'running':
+        raise HTTPException(status_code=400, detail='Cancel the running job before restart')
+    db.execute(
+        update(PublishedArticle)
+        .where(PublishedArticle.job_id == job.id)
+        .where(PublishedArticle.status.in_(['queued', 'running', 'failed', 'canceled']))
+        .values(status='canceled', error_text='Canceled before job restart')
+    )
+    job.status = 'queued'
+    job.retry_after = None
+    job.started_at = None
+    job.finished_at = None
+    job.error_text = None
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 @app.get('/api/v1/publishing/jobs/{job_id}/articles', response_model=list[PublishedArticleOut])

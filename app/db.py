@@ -30,6 +30,7 @@ def _ensure_publishing_columns() -> None:
         "ALTER TABLE publish_jobs ADD COLUMN IF NOT EXISTS retry_after TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS generation_limit_per_hour INTEGER",
         "ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS generation_limit_per_24h INTEGER",
+        "ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS generation_limit_reset_at TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMP WITH TIME ZONE",
         "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS sequence_number INTEGER",
         "ALTER TABLE published_articles ADD COLUMN IF NOT EXISTS source_article_ids JSONB",

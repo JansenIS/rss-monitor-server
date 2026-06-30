@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -12,6 +11,12 @@ from .db import SessionLocal, init_db
 from .models import Article, FetchCommand, FetchRun, FetchSourceLog, Source
 from .rss_fetcher import SourceFetchResult, fetch_sources_parallel
 from .utils import now_utc
+
+
+def retrospective_scheduled_for(day: date | str) -> datetime:
+    if isinstance(day, str):
+        day = datetime.fromisoformat(day).date()
+    return datetime.combine(day, time.min, tzinfo=timezone.utc)
 
 
 def _load_sources(db: Session, country_code: str | None = None) -> list[Source]:
@@ -294,15 +299,26 @@ async def process_publish_jobs_once() -> bool:
         with SessionLocal() as db:
             if published_slot_exists(db, job.id, site.id, scheduled_for, sequence_number):
                 return 'skipped', None
-            retry_at = site_generation_delay(db, site)
+            retry_at = None if job.pipeline_type == 'retrospective' else site_generation_delay(db, site)
             if retry_at:
                 return 'rate_limited', retry_at
+            current_job = db.get(PublishJob, job.id)
+            if current_job and current_job.status == 'canceled':
+                return 'canceled', None
             row = PublishedArticle(job_id=job.id, site_id=site.id, status='running', scheduled_for=scheduled_for, sequence_number=sequence_number, source_article_ids=source_article_ids)
             db.add(row)
             db.commit()
             db.refresh(row)
             row_id = row.id
         try:
+            with SessionLocal() as db:
+                current_job = db.get(PublishJob, job.id)
+                if current_job and current_job.status == 'canceled':
+                    row = db.get(PublishedArticle, row_id)
+                    if row:
+                        row.status = 'canceled'
+                        db.commit()
+                    return 'canceled', None
             planned_date = scheduled_for.date().isoformat() if scheduled_for else None
             article = await routerai_chat(
                 base_url,
@@ -313,10 +329,18 @@ async def process_publish_jobs_once() -> bool:
             title = article.get('title') or 'Generated article'
             image_prompt = build_image_prompt(title, job.country_name or job.country_code, job.country_code)
             image = await routerai_image(base_url, api_key, job.image_model or DEFAULT_ROUTERAI_IMAGE_MODEL, image_prompt)
+            with SessionLocal() as db:
+                current_job = db.get(PublishJob, job.id)
+                if current_job and current_job.status == 'canceled':
+                    row = db.get(PublishedArticle, row_id)
+                    if row:
+                        row.status = 'canceled'
+                        db.commit()
+                    return 'canceled', None
             wp = await upload_to_wordpress(site, article, image, image_prompt, publish_at=scheduled_for)
             with SessionLocal() as db:
                 row = db.get(PublishedArticle, row_id)
-                if row:
+                if row and row.status != 'canceled':
                     row.status = 'published'
                     row.title = title
                     row.slug = article.get('slug')
@@ -353,12 +377,14 @@ async def process_publish_jobs_once() -> bool:
                     had_errors = True
                     continue
                 for index in range(articles_per_day):
-                    scheduled_for = datetime.combine(datetime.fromisoformat(day['date']).date(), time(hour=min(23, 8 + index)), tzinfo=timezone.utc)
+                    scheduled_for = retrospective_scheduled_for(day['date'])
                     rotated = day_articles[index % len(day_articles):] + day_articles[:index % len(day_articles)]
                     result, limited_until = await publish_one(site, rotated, scheduled_for, index + 1)
                     if result == 'rate_limited':
                         retry_after = limited_until
                         break
+                    if result == 'canceled':
+                        return True
                     had_errors = (result == 'failed') or had_errors
                 if retry_after:
                     break
@@ -371,6 +397,8 @@ async def process_publish_jobs_once() -> bool:
             if result == 'rate_limited':
                 retry_after = limited_until
                 break
+            if result == 'canceled':
+                return True
             had_errors = (result == 'failed') or had_errors
 
     with SessionLocal() as db:

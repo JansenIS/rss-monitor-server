@@ -40,7 +40,7 @@
     <div class="row"><div><label>Язык сайта</label><select id="siteLanguage"><option value="">Использовать язык задания</option><option value="en">English</option><option value="fr">French</option></select></div><div><label>Активен</label><select id="siteActive"><option value="true">true</option><option value="false">false</option></select></div></div>
     <div class="row"><div><label>Лимит генераций в час</label><input id="siteLimitHour" type="number" min="1"></div><div><label>Лимит генераций за 24 часа</label><input id="siteLimitDay" type="number" min="1"></div></div>
     <label>Специфика сайта</label><textarea id="siteSpecificity"></textarea>
-    <button data-action="saveSite">Сохранить сайт</button> <button data-action="clearSiteForm">Очистить</button> <button data-action="loadSites">Обновить список</button>
+    <button data-action="saveSite">Сохранить сайт</button> <button data-action="clearSiteForm">Очистить</button> <button data-action="loadSites">Обновить список</button> <button data-action="resetAllSiteLimits">Сбросить лимиты всех сайтов</button>
   </fieldset>
 
   <fieldset>
@@ -280,17 +280,31 @@ function parseCategories(raw) {
 function renderSite(site) {
   const wrapper = document.createElement('div');
   wrapper.className = 'site';
-  wrapper.innerHTML = `<b></b> <span class="base-url"></span> [<span class="state"></span>]<br>categories: <span class="categories"></span><br>`;
+  wrapper.innerHTML = `<b></b> <span class="base-url"></span> [<span class="state"></span>]<br>categories: <span class="categories"></span><br>limits reset: <span class="limits-reset"></span><br>`;
   wrapper.querySelector('b').textContent = site.name;
   wrapper.querySelector('.base-url').textContent = site.base_url;
   wrapper.querySelector('.state').textContent = site.is_active ? 'active' : 'off';
   wrapper.querySelector('.categories').textContent = formatCategories(site.categories);
+  wrapper.querySelector('.limits-reset').textContent = site.generation_limit_reset_at || '-';
   const editButton = document.createElement('button');
   editButton.type = 'button';
   editButton.textContent = 'Редактировать';
   editButton.addEventListener('click', () => editSite(site));
   wrapper.appendChild(editButton);
+  const resetButton = document.createElement('button');
+  resetButton.type = 'button';
+  resetButton.textContent = 'Сбросить лимиты';
+  resetButton.addEventListener('click', run(async () => {
+    log(await api(`/api/v1/publishing/sites/${site.id}/limits/reset`, { method: 'POST' }));
+    await loadSites();
+  }));
+  wrapper.appendChild(resetButton);
   return wrapper;
+}
+
+async function resetAllSiteLimits() {
+  log(await api('/api/v1/publishing/limits/reset', { method: 'POST' }));
+  await loadSites();
 }
 
 async function loadSites() {
@@ -384,6 +398,24 @@ function renderJob(job) {
     log(await api(`/api/v1/publishing/jobs/${job.id}/articles`));
   }));
   wrapper.appendChild(articlesButton);
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.textContent = 'Отменить';
+  cancelButton.disabled = ['completed', 'completed_with_errors', 'failed', 'canceled'].includes(job.status);
+  cancelButton.addEventListener('click', run(async () => {
+    log(await api(`/api/v1/publishing/jobs/${job.id}/cancel`, { method: 'POST' }));
+    await loadJobs();
+  }));
+  wrapper.appendChild(cancelButton);
+  const restartButton = document.createElement('button');
+  restartButton.type = 'button';
+  restartButton.textContent = 'Перезапустить';
+  restartButton.disabled = job.status === 'running';
+  restartButton.addEventListener('click', run(async () => {
+    log(await api(`/api/v1/publishing/jobs/${job.id}/restart`, { method: 'POST' }));
+    await loadJobs();
+  }));
+  wrapper.appendChild(restartButton);
   return wrapper;
 }
 
@@ -401,6 +433,7 @@ const actions = {
   saveSite,
   clearSiteForm,
   loadSites,
+  resetAllSiteLimits,
   previewNews,
   createJob,
   loadJobs,
