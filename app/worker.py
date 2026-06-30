@@ -328,7 +328,7 @@ async def process_publish_jobs_once() -> bool:
             )
             title = article.get('title') or 'Generated article'
             image_prompt = build_image_prompt(title, job.country_name or job.country_code, job.country_code)
-            image = await routerai_image(base_url, api_key, job.image_model or DEFAULT_ROUTERAI_IMAGE_MODEL, image_prompt)
+            image = await routerai_image(base_url, api_key, job.image_model or DEFAULT_ROUTERAI_IMAGE_MODEL, image_prompt, raise_on_error=True)
             with SessionLocal() as db:
                 current_job = db.get(PublishJob, job.id)
                 if current_job and current_job.status == 'canceled':

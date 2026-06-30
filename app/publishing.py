@@ -206,21 +206,39 @@ async def routerai_chat(base_url: str, api_key: str, model: str, messages: list[
         return {'title': 'Generated article', 'content': content, 'excerpt': content[:240], 'categories': []}
 
 
-async def routerai_image(base_url: str, api_key: str, model: str, prompt: str) -> bytes | None:
+class RouterAIImageError(RuntimeError):
+    pass
+
+
+def _routerai_image_items(data: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ('data', 'images'):
+        value = data.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+async def routerai_image(base_url: str, api_key: str, model: str, prompt: str, *, raise_on_error: bool = False) -> bytes | None:
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
             resp.raise_for_status()
             data = resp.json()
-            item = data.get('data', [{}])[0]
-            if item.get('b64_json'):
-                return base64.b64decode(item['b64_json'])
-            if item.get('url'):
-                img = await client.get(item['url'])
-                img.raise_for_status()
-                return img.content
-    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, binascii.Error):
+            for item in _routerai_image_items(data):
+                image_b64 = item.get('b64_json') or item.get('base64')
+                if image_b64:
+                    return base64.b64decode(image_b64)
+                image_url = item.get('url') or item.get('image_url')
+                if image_url:
+                    img = await client.get(image_url)
+                    img.raise_for_status()
+                    return img.content
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, binascii.Error) as exc:
+        if raise_on_error:
+            raise RouterAIImageError(f'RouterAI image generation failed: {exc}') from exc
         return None
+    if raise_on_error:
+        raise RouterAIImageError('RouterAI image generation returned no image data')
     return None
 
 
@@ -310,19 +328,53 @@ def build_rewrite_messages(snapshot: list[dict[str, Any]], site: WordPressSite, 
     ]
 
 
+class WordPressUploadError(RuntimeError):
+    pass
+
+
+def wordpress_api_base(site_base_url: str) -> str:
+    base_url = site_base_url.rstrip('/')
+    if base_url.endswith('/wp-json/wp/v2'):
+        return base_url
+    if base_url.endswith('/wp-json'):
+        return f'{base_url}/wp/v2'
+    return f'{base_url}/wp-json/wp/v2'
+
+
+def _wordpress_error_message(exc: httpx.HTTPStatusError, action: str) -> str:
+    status_code = exc.response.status_code
+    url = str(exc.request.url)
+    details = exc.response.text.strip()[:500]
+    message = f'WordPress {action} failed with HTTP {status_code} for {url}'
+    if status_code == 404 and '/wp-json/wp/v2' in url:
+        message += '. WordPress REST API endpoint was not found; check that the configured base_url points to a WordPress site with REST API enabled.'
+    if details:
+        message += f' Response: {details}'
+    return message
+
+
+def _raise_wordpress_status(response: httpx.Response, action: str) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise WordPressUploadError(_wordpress_error_message(exc, action)) from exc
+
+
 async def upload_to_wordpress(site: WordPressSite, article: dict[str, Any], image: bytes | None, image_prompt: str, publish_at: datetime | None = None) -> dict[str, Any]:
     auth = (site.username or '', site.app_password or '')
-    base = site.base_url.rstrip('/') + '/wp-json/wp/v2'
+    base = wordpress_api_base(site.base_url)
     media_id = None
     async with httpx.AsyncClient(timeout=120, auth=auth) as client:
+        api_resp = await client.get(base)
+        _raise_wordpress_status(api_resp, 'REST API check')
         if image:
             media_resp = await client.post(f'{base}/media', headers={'Content-Disposition': _content_disposition_filename(article.get('title', 'image'), '.png'), 'Content-Type': 'image/png'}, content=image)
-            media_resp.raise_for_status()
+            _raise_wordpress_status(media_resp, 'media upload')
             media = media_resp.json()
             media_id = media.get('id')
             if media_id:
                 alt_resp = await client.post(f'{base}/media/{media_id}', json={'alt_text': image_prompt[:250]})
-                alt_resp.raise_for_status()
+                _raise_wordpress_status(alt_resp, 'media alt text update')
         post_payload = {
             'title': article.get('title'),
             'slug': article.get('slug') or _slug(article.get('title', 'article')),
@@ -336,6 +388,6 @@ async def upload_to_wordpress(site: WordPressSite, article: dict[str, Any], imag
         if media_id:
             post_payload['featured_media'] = media_id
         post_resp = await client.post(f'{base}/posts', json=post_payload)
-        post_resp.raise_for_status()
+        _raise_wordpress_status(post_resp, 'post publishing')
         post = post_resp.json()
     return {'post_id': post.get('id'), 'link': post.get('link'), 'media_id': media_id, 'categories': post_payload['categories']}
