@@ -21,7 +21,6 @@ class FailingAsyncClient:
     def __init__(self, *args, **kwargs):
         self.timeout = kwargs.get('timeout')
 
-
     async def __aenter__(self):
         return self
 
@@ -33,10 +32,33 @@ class FailingAsyncClient:
         return httpx.Response(504, request=request)
 
 
-class ImageUrlAsyncClient:
+class FlakyImageAsyncClient:
+    attempts = 0
+
     def __init__(self, *args, **kwargs):
         self.timeout = kwargs.get('timeout')
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url, **kwargs):
+        type(self).attempts += 1
+        request = httpx.Request('POST', url)
+        if type(self).attempts == 1:
+            return httpx.Response(504, request=request)
+        return httpx.Response(200, request=request, json={'data': [{'image_url': 'https://cdn.example/image.png'}]})
+
+    async def get(self, url, **kwargs):
+        request = httpx.Request('GET', url)
+        return httpx.Response(200, request=request, content=b'image-after-retry')
+
+
+class ImageUrlAsyncClient:
+    def __init__(self, *args, **kwargs):
+        self.timeout = kwargs.get('timeout')
 
     async def __aenter__(self):
         return self
@@ -54,6 +76,13 @@ class ImageUrlAsyncClient:
 
 
 class PublishingImageTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.original_retry_delays = publishing.ROUTERAI_IMAGE_RETRY_DELAYS_SECONDS
+        publishing.ROUTERAI_IMAGE_RETRY_DELAYS_SECONDS = (0, 0, 0)
+
+    def tearDown(self):
+        publishing.ROUTERAI_IMAGE_RETRY_DELAYS_SECONDS = self.original_retry_delays
+
     async def test_routerai_image_returns_none_on_http_failure(self):
         original_client = publishing.httpx.AsyncClient
         publishing.httpx.AsyncClient = FailingAsyncClient
@@ -101,6 +130,18 @@ class PublishingImageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image, b'image-bytes')
         self.assertEqual(clients[0].timeout, publishing.ROUTERAI_IMAGE_TIMEOUT_SECONDS)
         self.assertEqual(publishing.ROUTERAI_IMAGE_TIMEOUT_SECONDS, 900)
+
+    async def test_routerai_image_retries_transient_gateway_timeout(self):
+        original_client = publishing.httpx.AsyncClient
+        FlakyImageAsyncClient.attempts = 0
+        publishing.httpx.AsyncClient = FlakyImageAsyncClient
+        try:
+            image = await publishing.routerai_image('https://routerai.ru/api/v1', 'key', 'model', 'prompt', raise_on_error=True)
+        finally:
+            publishing.httpx.AsyncClient = original_client
+
+        self.assertEqual(image, b'image-after-retry')
+        self.assertEqual(FlakyImageAsyncClient.attempts, 2)
 
 
 class MissingWordPressRestClient:
