@@ -157,6 +157,7 @@ class WordPressSite(Base):
     specificity: Mapped[str | None] = mapped_column(Text)
     generation_limit_per_hour: Mapped[int | None] = mapped_column(Integer)
     generation_limit_per_24h: Mapped[int | None] = mapped_column(Integer)
+    generation_limit_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

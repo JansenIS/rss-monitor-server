@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import re
+import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select
@@ -146,6 +149,8 @@ def site_generation_delay(db: Session, site: WordPressSite) -> datetime | None:
         if not limit:
             continue
         since = now - window
+        if site.generation_limit_reset_at and site.generation_limit_reset_at > since:
+            since = site.generation_limit_reset_at
         rows = list(db.execute(
             select(PublishedArticle.created_at)
             .where(PublishedArticle.site_id == site.id)
@@ -202,17 +207,20 @@ async def routerai_chat(base_url: str, api_key: str, model: str, messages: list[
 
 
 async def routerai_image(base_url: str, api_key: str, model: str, prompt: str) -> bytes | None:
-    async with httpx.AsyncClient(timeout=180) as client:
-        resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
-        resp.raise_for_status()
-        data = resp.json()
-        item = data.get('data', [{}])[0]
-        if item.get('b64_json'):
-            return base64.b64decode(item['b64_json'])
-        if item.get('url'):
-            img = await client.get(item['url'])
-            img.raise_for_status()
-            return img.content
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
+            resp.raise_for_status()
+            data = resp.json()
+            item = data.get('data', [{}])[0]
+            if item.get('b64_json'):
+                return base64.b64decode(item['b64_json'])
+            if item.get('url'):
+                img = await client.get(item['url'])
+                img.raise_for_status()
+                return img.content
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, binascii.Error):
+        return None
     return None
 
 
@@ -220,6 +228,19 @@ def _slug(text: str) -> str:
     slug = re.sub(r'[^\w\s-]', '', text.lower(), flags=re.UNICODE)
     slug = re.sub(r'[\s_]+', '-', slug).strip('-')
     return slug[:120] or 'article'
+
+
+def _ascii_filename(text: str, extension: str) -> str:
+    ascii_name = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    slug = _slug(ascii_name)
+    return f'{slug}{extension}'
+
+
+def _content_disposition_filename(text: str, extension: str) -> str:
+    unicode_filename = f'{_slug(text)}{extension}'
+    ascii_filename = _ascii_filename(text, extension)
+    encoded_filename = quote(unicode_filename, safe='')
+    return f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded_filename}"
 
 
 def _coerce_category_id(value: Any) -> int | None:
@@ -295,7 +316,7 @@ async def upload_to_wordpress(site: WordPressSite, article: dict[str, Any], imag
     media_id = None
     async with httpx.AsyncClient(timeout=120, auth=auth) as client:
         if image:
-            media_resp = await client.post(f'{base}/media', headers={'Content-Disposition': f'attachment; filename="{_slug(article.get("title", "image"))}.png"', 'Content-Type': 'image/png'}, content=image)
+            media_resp = await client.post(f'{base}/media', headers={'Content-Disposition': _content_disposition_filename(article.get('title', 'image'), '.png'), 'Content-Type': 'image/png'}, content=image)
             media_resp.raise_for_status()
             media = media_resp.json()
             media_id = media.get('id')

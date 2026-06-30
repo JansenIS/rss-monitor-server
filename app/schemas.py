@@ -177,6 +177,7 @@ class WordPressSiteIn(BaseModel):
 
 class WordPressSiteOut(WordPressSiteIn):
     id: int
+    generation_limit_reset_at: datetime | None = None
     app_password_saved: bool = False
     app_password: str | None = None
     model_config = {'from_attributes': True}
