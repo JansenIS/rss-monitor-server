@@ -51,6 +51,7 @@
     <div class="row"><div><label>Тип пайплайна</label><select id="pipelineType"><option value="recent">Последний период</option><option value="continuous">Постоянно каждый час</option><option value="retrospective">Ретроспективный архив</option></select></div><div><label>Период новостей, часов</label><input id="hoursBack" type="number" min="1" max="24" value="1"></div></div>
     <div class="row"><div><label>Начало архива</label><input id="periodStart" type="date"></div><div><label>Конец архива</label><input id="periodEnd" type="date"></div></div>
     <label>Статей в день на каждый сайт</label><input id="articlesPerDay" type="number" min="1" max="100" placeholder="8">
+    <label>Конкретные сайты задания (если ничего не выбрано — участвуют все подходящие активные сайты)</label><div id="jobSites"></div>
     <button data-action="previewNews">Показать новости</button> <button data-action="createJob">Создать задание</button>
   </fieldset>
 
@@ -320,10 +321,24 @@ async function loadCountries() {
   return countries;
 }
 
+function renderJobSiteOption(site) {
+  const label = document.createElement('label');
+  label.style.display = 'block';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.name = 'jobSiteIds';
+  checkbox.value = site.id;
+  checkbox.style.width = 'auto';
+  checkbox.disabled = !site.is_active;
+  label.append(checkbox, ` #${site.id} ${site.name} (${(site.country_codes || []).join(', ') || 'all'}${site.is_active ? '' : ', inactive'})`);
+  return label;
+}
+
 async function loadSites() {
   await loadCountries();
   const sites = await api('/api/v1/publishing/sites');
   $('sites').replaceChildren(...sites.map(renderSite));
+  $('jobSites').replaceChildren(...sites.map(renderJobSiteOption));
   log(sites);
 }
 
@@ -392,6 +407,7 @@ async function createJob() {
     period_end: $('periodEnd').value || null,
     articles_per_day: $('articlesPerDay').value ? parseInt($('articlesPerDay').value, 10) : null,
     site_limit: $('siteLimit').value ? parseInt($('siteLimit').value, 10) : null,
+    selected_site_ids: Array.from(document.querySelectorAll('input[name="jobSiteIds"]:checked')).map(input => parseInt(input.value, 10)),
   };
   log(await api('/api/v1/publishing/jobs', { method: 'POST', body: JSON.stringify(body) }));
   await loadJobs();
@@ -400,12 +416,13 @@ async function createJob() {
 function renderJob(job) {
   const wrapper = document.createElement('div');
   wrapper.className = 'site';
-  wrapper.innerHTML = `<b></b> <span class="status"></span> <span class="country"></span> → <span class="language"></span><br>planned/site: <span class="planned"></span><br><span class="error"></span><br>`;
+  wrapper.innerHTML = `<b></b> <span class="status"></span> <span class="country"></span> → <span class="language"></span><br>planned/site: <span class="planned"></span><br>sites: <span class="selected-sites"></span><br><span class="error"></span><br>`;
   wrapper.querySelector('b').textContent = `#${job.id}`;
   wrapper.querySelector('.status').textContent = job.status;
   wrapper.querySelector('.country').textContent = job.country_code;
   wrapper.querySelector('.language').textContent = job.target_language;
   wrapper.querySelector('.planned').textContent = job.planned_articles_per_site || '-';
+  wrapper.querySelector('.selected-sites').textContent = (job.selected_site_ids || []).join(', ') || 'all matching';
   wrapper.querySelector('.error').textContent = job.error_text || '';
   const articlesButton = document.createElement('button');
   articlesButton.type = 'button';
