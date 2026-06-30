@@ -41,16 +41,17 @@ def get_or_create_settings(db: Session) -> PublishingSettings:
     return settings
 
 
-def select_recent_articles(db: Session, country_code: str, hours_back: int = 1) -> list[Article]:
+def select_recent_articles(db: Session, country_code: str, hours_back: int = 1, source_ids: list[int] | None = None) -> list[Article]:
     since = now_utc() - timedelta(hours=max(1, hours_back))
     stmt = (
         select(Article)
         .where(Article.country_code == country_code.upper())
         .where((Article.published_at >= since) | (Article.fetched_at >= since))
         .where(Article.publishing_used_at.is_(None))
-        .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
-        .limit(50)
     )
+    if source_ids:
+        stmt = stmt.where(Article.source_id.in_(source_ids))
+    stmt = stmt.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc()).limit(50)
     return list(db.execute(stmt).scalars().all())
 
 
@@ -71,16 +72,17 @@ def iter_days(start: date, end: date) -> list[date]:
     return days
 
 
-def select_articles_for_day(db: Session, country_code: str, day: date, limit: int = 50) -> list[Article]:
+def select_articles_for_day(db: Session, country_code: str, day: date, limit: int = 50, source_ids: list[int] | None = None) -> list[Article]:
     start, end = _day_bounds(day)
     stmt = (
         select(Article)
         .where(Article.country_code == country_code.upper())
         .where((Article.published_at >= start) & (Article.published_at <= end))
         .where(Article.publishing_used_at.is_(None))
-        .order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc())
-        .limit(limit)
     )
+    if source_ids:
+        stmt = stmt.where(Article.source_id.in_(source_ids))
+    stmt = stmt.order_by(Article.published_at.desc().nullslast(), Article.fetched_at.desc()).limit(limit)
     articles = list(db.execute(stmt).scalars().all())
     if articles:
         return articles
@@ -89,16 +91,17 @@ def select_articles_for_day(db: Session, country_code: str, day: date, limit: in
         .where(Article.country_code == country_code.upper())
         .where((Article.fetched_at >= start) & (Article.fetched_at <= end))
         .where(Article.publishing_used_at.is_(None))
-        .order_by(Article.fetched_at.desc())
-        .limit(limit)
     )
+    if source_ids:
+        stmt = stmt.where(Article.source_id.in_(source_ids))
+    stmt = stmt.order_by(Article.fetched_at.desc()).limit(limit)
     return list(db.execute(stmt).scalars().all())
 
 
-def build_retrospective_snapshot(db: Session, country_code: str, start: date, end: date, articles_per_day: int) -> dict[str, Any]:
+def build_retrospective_snapshot(db: Session, country_code: str, start: date, end: date, articles_per_day: int, source_ids: list[int] | None = None) -> dict[str, Any]:
     days = []
     for day in iter_days(start, end):
-        articles = select_articles_for_day(db, country_code, day, limit=max(50, articles_per_day * 5))
+        articles = select_articles_for_day(db, country_code, day, limit=max(50, articles_per_day * 5), source_ids=source_ids)
         days.append({'date': day.isoformat(), 'articles': build_articles_snapshot(articles)})
     return {
         'mode': 'retrospective',

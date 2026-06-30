@@ -439,9 +439,46 @@ def delete_wordpress_site(site_id: int, db: Session = Depends(get_db), _: None =
 
 
 @app.get('/api/v1/publishing/recent-news')
-def recent_news_for_country(country_code: str, hours_back: int = Query(1, ge=1, le=24), db: Session = Depends(get_db), _: None = Depends(require_auth)):
-    articles = select_recent_articles(db, country_code, hours_back)
-    return {'country_code': country_code.upper(), 'hours_back': hours_back, 'total': len(articles), 'articles': build_articles_snapshot(articles)}
+def recent_news_for_country(
+    country_code: str,
+    hours_back: int = Query(1, ge=1, le=24),
+    source_ids: list[int] | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_auth),
+):
+    selected_source_ids = _validate_source_filter(db, country_code, source_ids)
+    articles = select_recent_articles(db, country_code, hours_back, source_ids=selected_source_ids)
+    return {
+        'country_code': country_code.upper(),
+        'hours_back': hours_back,
+        'selected_source_ids': selected_source_ids,
+        'total': len(articles),
+        'articles': build_articles_snapshot(articles),
+    }
+
+
+def _validate_source_filter(db: Session, country_code: str, source_ids: list[int] | None) -> list[int] | None:
+    if not source_ids:
+        return None
+    normalized = []
+    seen = set()
+    for source_id in source_ids:
+        if source_id < 1:
+            raise HTTPException(status_code=400, detail='selected_source_ids must contain positive integers')
+        if source_id not in seen:
+            normalized.append(source_id)
+            seen.add(source_id)
+    existing = set(
+        db.execute(
+            select(Source.id)
+            .where(Source.id.in_(normalized))
+            .where(Source.country_code == country_code.upper())
+        ).scalars().all()
+    )
+    missing = [source_id for source_id in normalized if source_id not in existing]
+    if missing:
+        raise HTTPException(status_code=400, detail=f'Unknown source ids for country {country_code.upper()}: {missing}')
+    return normalized
 
 
 @app.post('/api/v1/publishing/jobs', response_model=PublishJobOut)
@@ -451,6 +488,7 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
     period_end = None
     planned_articles_per_site = None
     selected_site_ids = payload.selected_site_ids or None
+    selected_source_ids = _validate_source_filter(db, payload.country_code, payload.selected_source_ids)
 
     if selected_site_ids:
         existing_site_ids = set(db.execute(select(WordPressSite.id).where(WordPressSite.id.in_(selected_site_ids))).scalars().all())
@@ -467,7 +505,7 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
             days = iter_days(payload.period_start, payload.period_end)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        snapshot = build_retrospective_snapshot(db, payload.country_code, payload.period_start, payload.period_end, payload.articles_per_day)
+        snapshot = build_retrospective_snapshot(db, payload.country_code, payload.period_start, payload.period_end, payload.articles_per_day, source_ids=selected_source_ids)
         empty_days = [day['date'] for day in snapshot['days'] if not day['articles']]
         if empty_days:
             raise HTTPException(status_code=400, detail=f'No archived articles found for days: {", ".join(empty_days[:10])}')
@@ -475,9 +513,9 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
         period_end = datetime.combine(payload.period_end, datetime.max.time(), tzinfo=timezone.utc)
         planned_articles_per_site = len(days) * payload.articles_per_day
     else:
-        articles = select_recent_articles(db, payload.country_code, payload.hours_back)
+        articles = select_recent_articles(db, payload.country_code, payload.hours_back, source_ids=selected_source_ids)
         if not articles:
-            raise HTTPException(status_code=400, detail='No recent articles found for selected country and period')
+            raise HTTPException(status_code=400, detail='No recent articles found for selected country, sources and period')
         snapshot = build_articles_snapshot(articles)
 
     job = PublishJob(
@@ -492,6 +530,7 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
         planned_articles_per_site=planned_articles_per_site,
         site_limit=payload.site_limit,
         selected_site_ids=selected_site_ids,
+        selected_source_ids=selected_source_ids,
         rewrite_model=payload.rewrite_model or settings_obj.rewrite_model,
         image_model=payload.image_model or settings_obj.image_model,
         stop_words=payload.stop_words or settings_obj.stop_words,

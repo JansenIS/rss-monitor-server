@@ -243,14 +243,20 @@ class UniqueArticleSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshots, [[articles[1]]])
 
 class PublishJobRequestTests(unittest.TestCase):
-    def test_selected_site_ids_are_deduplicated_and_empty_becomes_none(self):
+    def test_selected_ids_are_deduplicated_and_empty_becomes_none(self):
         from app.schemas import PublishJobRequest
 
-        request = PublishJobRequest(country_code='SC', selected_site_ids=[2, 1, 2])
+        request = PublishJobRequest(
+            country_code='SC',
+            selected_site_ids=[2, 1, 2],
+            selected_source_ids=[4, 3, 4],
+        )
         self.assertEqual(request.selected_site_ids, [2, 1])
+        self.assertEqual(request.selected_source_ids, [4, 3])
 
-        empty_request = PublishJobRequest(country_code='SC', selected_site_ids=[])
+        empty_request = PublishJobRequest(country_code='SC', selected_site_ids=[], selected_source_ids=[])
         self.assertIsNone(empty_request.selected_site_ids)
+        self.assertIsNone(empty_request.selected_source_ids)
 
 if __name__ == '__main__':
     unittest.main()

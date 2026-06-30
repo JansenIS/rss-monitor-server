@@ -204,21 +204,22 @@ class PublishJobRequest(BaseModel):
     articles_per_day: int | None = Field(default=None, ge=1, le=100)
     site_limit: int | None = Field(default=None, ge=1)
     selected_site_ids: list[int] | None = None
+    selected_source_ids: list[int] | None = None
     rewrite_model: str | None = None
     image_model: str | None = None
     stop_words: str | None = None
     specificity: str | None = None
 
-    @field_validator('selected_site_ids')
+    @field_validator('selected_site_ids', 'selected_source_ids')
     @classmethod
-    def normalize_selected_site_ids(cls, value: list[int] | None) -> list[int] | None:
+    def normalize_positive_ids(cls, value: list[int] | None) -> list[int] | None:
         if not value:
             return None
         normalized: list[int] = []
         seen: set[int] = set()
         for site_id in value:
             if site_id < 1:
-                raise ValueError('selected_site_ids must contain positive integers')
+                raise ValueError('selected ids must contain positive integers')
             if site_id not in seen:
                 normalized.append(site_id)
                 seen.add(site_id)
@@ -239,6 +240,7 @@ class PublishJobOut(BaseModel):
     planned_articles_per_site: int | None = None
     site_limit: int | None = None
     selected_site_ids: list[int] | None = None
+    selected_source_ids: list[int] | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
