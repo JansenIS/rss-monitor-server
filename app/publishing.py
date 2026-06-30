@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -18,6 +19,8 @@ from .utils import now_utc
 
 DEFAULT_ROUTERAI_BASE_URL = 'https://routerai.ru/api/v1'
 ROUTERAI_IMAGE_TIMEOUT_SECONDS = 900
+ROUTERAI_IMAGE_RETRY_STATUSES = {502, 503, 504}
+ROUTERAI_IMAGE_RETRY_DELAYS_SECONDS = (5, 15, 30)
 DEFAULT_ROUTERAI_IMAGE_MODEL = 'openai/gpt-image-1'
 NATURE_STEREOTYPE_BAN = (
     'Do not include stereotypical nature or safari imagery: no rhinos, parrots, '
@@ -220,25 +223,46 @@ def _routerai_image_items(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def routerai_image(base_url: str, api_key: str, model: str, prompt: str, *, raise_on_error: bool = False) -> bytes | None:
-    try:
-        async with httpx.AsyncClient(timeout=ROUTERAI_IMAGE_TIMEOUT_SECONDS) as client:
-            resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
-            resp.raise_for_status()
-            data = resp.json()
-            for item in _routerai_image_items(data):
-                image_b64 = item.get('b64_json') or item.get('base64')
-                if image_b64:
-                    return base64.b64decode(image_b64)
-                image_url = item.get('url') or item.get('image_url')
-                if image_url:
-                    img = await client.get(image_url)
-                    img.raise_for_status()
-                    return img.content
-    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, binascii.Error) as exc:
-        if raise_on_error:
-            raise RouterAIImageError(f'RouterAI image generation failed: {exc}') from exc
-        return None
+    retry_delays = ROUTERAI_IMAGE_RETRY_DELAYS_SECONDS
+    max_attempts = len(retry_delays) + 1
+    last_exc: Exception | None = None
+
+    for attempt in range(max_attempts):
+        try:
+            async with httpx.AsyncClient(timeout=ROUTERAI_IMAGE_TIMEOUT_SECONDS) as client:
+                resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
+                if resp.status_code in ROUTERAI_IMAGE_RETRY_STATUSES and attempt < max_attempts - 1:
+                    last_exc = httpx.HTTPStatusError(
+                        f'Transient RouterAI image response: {resp.status_code}',
+                        request=resp.request,
+                        response=resp,
+                    )
+                    await asyncio.sleep(retry_delays[attempt])
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                for item in _routerai_image_items(data):
+                    image_b64 = item.get('b64_json') or item.get('base64')
+                    if image_b64:
+                        return base64.b64decode(image_b64)
+                    image_url = item.get('url') or item.get('image_url')
+                    if image_url:
+                        img = await client.get(image_url)
+                        img.raise_for_status()
+                        return img.content
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, binascii.Error) as exc:
+            last_exc = exc
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in ROUTERAI_IMAGE_RETRY_STATUSES and attempt < max_attempts - 1:
+                await asyncio.sleep(retry_delays[attempt])
+                continue
+            if raise_on_error:
+                raise RouterAIImageError(f'RouterAI image generation failed: {exc}') from exc
+            return None
+        break
+
     if raise_on_error:
+        if last_exc is not None:
+            raise RouterAIImageError(f'RouterAI image generation failed after {max_attempts} attempts: {last_exc}') from last_exc
         raise RouterAIImageError('RouterAI image generation returned no image data')
     return None
 
