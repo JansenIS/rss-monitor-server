@@ -19,7 +19,8 @@ class PublishingFilenameTests(unittest.TestCase):
 
 class FailingAsyncClient:
     def __init__(self, *args, **kwargs):
-        pass
+        self.timeout = kwargs.get('timeout')
+
 
     async def __aenter__(self):
         return self
@@ -34,7 +35,8 @@ class FailingAsyncClient:
 
 class ImageUrlAsyncClient:
     def __init__(self, *args, **kwargs):
-        pass
+        self.timeout = kwargs.get('timeout')
+
 
     async def __aenter__(self):
         return self
@@ -80,6 +82,25 @@ class PublishingImageTests(unittest.IsolatedAsyncioTestCase):
             publishing.httpx.AsyncClient = original_client
 
         self.assertEqual(image, b'image-bytes')
+
+    async def test_routerai_image_uses_long_generation_timeout(self):
+        original_client = publishing.httpx.AsyncClient
+        clients = []
+
+        class CapturingAsyncClient(ImageUrlAsyncClient):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                clients.append(self)
+
+        publishing.httpx.AsyncClient = CapturingAsyncClient
+        try:
+            image = await publishing.routerai_image('https://routerai.ru/api/v1', 'key', 'model', 'prompt')
+        finally:
+            publishing.httpx.AsyncClient = original_client
+
+        self.assertEqual(image, b'image-bytes')
+        self.assertEqual(clients[0].timeout, publishing.ROUTERAI_IMAGE_TIMEOUT_SECONDS)
+        self.assertEqual(publishing.ROUTERAI_IMAGE_TIMEOUT_SECONDS, 900)
 
 
 class MissingWordPressRestClient:
