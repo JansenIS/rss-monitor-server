@@ -17,6 +17,7 @@ from .models import Article, PublishedArticle, PublishingSettings, PublishJob, W
 from .utils import now_utc
 
 DEFAULT_ROUTERAI_BASE_URL = 'https://routerai.ru/api/v1'
+ROUTERAI_IMAGE_TIMEOUT_SECONDS = 900
 DEFAULT_ROUTERAI_IMAGE_MODEL = 'openai/gpt-image-1'
 NATURE_STEREOTYPE_BAN = (
     'Do not include stereotypical nature or safari imagery: no rhinos, parrots, '
@@ -220,7 +221,7 @@ def _routerai_image_items(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 async def routerai_image(base_url: str, api_key: str, model: str, prompt: str, *, raise_on_error: bool = False) -> bytes | None:
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
+        async with httpx.AsyncClient(timeout=ROUTERAI_IMAGE_TIMEOUT_SECONDS) as client:
             resp = await client.post(f'{base_url.rstrip("/")}/images', headers=_auth_headers(api_key), json={'model': model, 'prompt': prompt, 'n': 1})
             resp.raise_for_status()
             data = resp.json()
