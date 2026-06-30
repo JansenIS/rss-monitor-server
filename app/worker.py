@@ -269,6 +269,9 @@ async def process_publish_jobs_once() -> bool:
         settings_obj = get_or_create_settings(db)
         site_stmt = select(WordPressSite).where(WordPressSite.is_active.is_(True)).order_by(WordPressSite.id.asc())
         all_sites = list(db.execute(site_stmt).scalars().all())
+        selected_site_ids = set(job.selected_site_ids or [])
+        if selected_site_ids:
+            all_sites = [site for site in all_sites if site.id in selected_site_ids]
         sites = [site for site in all_sites if site_accepts_country(site, job.country_code)]
         if job.site_limit:
             sites = sites[:job.site_limit]

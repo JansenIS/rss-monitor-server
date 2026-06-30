@@ -242,5 +242,15 @@ class UniqueArticleSnapshotTests(unittest.TestCase):
 
         self.assertEqual(snapshots, [[articles[1]]])
 
+class PublishJobRequestTests(unittest.TestCase):
+    def test_selected_site_ids_are_deduplicated_and_empty_becomes_none(self):
+        from app.schemas import PublishJobRequest
+
+        request = PublishJobRequest(country_code='SC', selected_site_ids=[2, 1, 2])
+        self.assertEqual(request.selected_site_ids, [2, 1])
+
+        empty_request = PublishJobRequest(country_code='SC', selected_site_ids=[])
+        self.assertIsNone(empty_request.selected_site_ids)
+
 if __name__ == '__main__':
     unittest.main()

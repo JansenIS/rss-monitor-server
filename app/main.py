@@ -450,6 +450,13 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
     period_start = None
     period_end = None
     planned_articles_per_site = None
+    selected_site_ids = payload.selected_site_ids or None
+
+    if selected_site_ids:
+        existing_site_ids = set(db.execute(select(WordPressSite.id).where(WordPressSite.id.in_(selected_site_ids))).scalars().all())
+        missing_site_ids = [site_id for site_id in selected_site_ids if site_id not in existing_site_ids]
+        if missing_site_ids:
+            raise HTTPException(status_code=400, detail=f'Unknown WordPress site ids: {missing_site_ids}')
 
     if payload.pipeline_type == 'continuous':
         snapshot = []
@@ -484,6 +491,7 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
         articles_per_day=payload.articles_per_day,
         planned_articles_per_site=planned_articles_per_site,
         site_limit=payload.site_limit,
+        selected_site_ids=selected_site_ids,
         rewrite_model=payload.rewrite_model or settings_obj.rewrite_model,
         image_model=payload.image_model or settings_obj.image_model,
         stop_words=payload.stop_words or settings_obj.stop_words,

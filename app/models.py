@@ -179,6 +179,7 @@ class PublishJob(Base):
     articles_per_day: Mapped[int | None] = mapped_column(Integer)
     planned_articles_per_site: Mapped[int | None] = mapped_column(Integer)
     site_limit: Mapped[int | None] = mapped_column(Integer)
+    selected_site_ids: Mapped[list | None] = mapped_column(JSONB)
     rewrite_model: Mapped[str | None] = mapped_column(String(255))
     image_model: Mapped[str | None] = mapped_column(String(255))
     stop_words: Mapped[str | None] = mapped_column(Text)
