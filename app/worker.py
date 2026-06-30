@@ -276,7 +276,7 @@ async def process_publish_jobs_once() -> bool:
         if job.site_limit:
             sites = sites[:job.site_limit]
         if job.pipeline_type == 'continuous':
-            articles = select_recent_articles(db, job.country_code, job.hours_back or 1)
+            articles = select_recent_articles(db, job.country_code, job.hours_back or 1, source_ids=job.selected_source_ids)
             job.articles_snapshot = build_articles_snapshot(articles)
             db.commit()
         api_key = settings_obj.routerai_api_key
@@ -297,7 +297,7 @@ async def process_publish_jobs_once() -> bool:
             if current:
                 current.status = 'waiting'
                 current.retry_after = now_utc() + timedelta(hours=1)
-                current.error_text = 'No unused recent articles found for selected country'
+                current.error_text = 'No unused recent articles found for selected country and sources'
                 db.commit()
         return True
 
