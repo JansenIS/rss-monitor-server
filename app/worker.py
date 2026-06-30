@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -255,10 +255,10 @@ async def main_loop() -> None:
 
 async def process_publish_jobs_once() -> bool:
     from .models import PublishedArticle, PublishingSettings, PublishJob, WordPressSite
-    from .publishing import DEFAULT_ROUTERAI_IMAGE_MODEL, build_image_prompt, build_rewrite_messages, get_or_create_settings, mark_source_articles_used, published_slot_exists, routerai_chat, routerai_image, site_generation_delay, source_ids_from_snapshot, upload_to_wordpress
+    from .publishing import DEFAULT_ROUTERAI_IMAGE_MODEL, build_articles_snapshot, build_image_prompt, build_unique_article_snapshots, build_rewrite_messages, get_or_create_settings, mark_source_articles_used, published_slot_exists, routerai_chat, routerai_image, select_recent_articles, site_accepts_country, site_generation_delay, source_ids_from_snapshot, upload_to_wordpress
 
     with SessionLocal() as db:
-        job = db.execute(select(PublishJob).where((PublishJob.status == 'queued') | ((PublishJob.status == 'rate_limited') & ((PublishJob.retry_after.is_(None)) | (PublishJob.retry_after <= now_utc())))).order_by(PublishJob.created_at.asc()).limit(1)).scalar_one_or_none()
+        job = db.execute(select(PublishJob).where((PublishJob.status == 'queued') | ((PublishJob.status.in_(['rate_limited', 'waiting'])) & ((PublishJob.retry_after.is_(None)) | (PublishJob.retry_after <= now_utc())))).order_by(PublishJob.created_at.asc()).limit(1)).scalar_one_or_none()
         if not job:
             return False
         job.status = 'running'
@@ -268,9 +268,14 @@ async def process_publish_jobs_once() -> bool:
         db.refresh(job)
         settings_obj = get_or_create_settings(db)
         site_stmt = select(WordPressSite).where(WordPressSite.is_active.is_(True)).order_by(WordPressSite.id.asc())
+        all_sites = list(db.execute(site_stmt).scalars().all())
+        sites = [site for site in all_sites if site_accepts_country(site, job.country_code)]
         if job.site_limit:
-            site_stmt = site_stmt.limit(job.site_limit)
-        sites = list(db.execute(site_stmt).scalars().all())
+            sites = sites[:job.site_limit]
+        if job.pipeline_type == 'continuous':
+            articles = select_recent_articles(db, job.country_code, job.hours_back or 1)
+            job.articles_snapshot = build_articles_snapshot(articles)
+            db.commit()
         api_key = settings_obj.routerai_api_key
         base_url = settings_obj.routerai_base_url or 'https://routerai.ru/api/v1'
 
@@ -283,13 +288,28 @@ async def process_publish_jobs_once() -> bool:
                 current.error_text = 'RouterAI API key is not configured'
                 db.commit()
         return True
+    if job.pipeline_type == 'continuous' and not (job.articles_snapshot if isinstance(job.articles_snapshot, list) else []):
+        with SessionLocal() as db:
+            current = db.get(PublishJob, job.id)
+            if current:
+                current.status = 'waiting'
+                current.retry_after = now_utc() + timedelta(hours=1)
+                current.error_text = 'No unused recent articles found for selected country'
+                db.commit()
+        return True
+
     if not sites:
         with SessionLocal() as db:
             current = db.get(PublishJob, job.id)
             if current:
-                current.status = 'failed'
-                current.finished_at = now_utc()
-                current.error_text = 'No active WordPress sites configured'
+                if current.pipeline_type == 'continuous':
+                    current.status = 'waiting'
+                    current.retry_after = now_utc() + timedelta(hours=1)
+                    current.error_text = 'No active WordPress sites configured for this country'
+                else:
+                    current.status = 'failed'
+                    current.finished_at = now_utc()
+                    current.error_text = 'No active WordPress sites configured for this country'
                 db.commit()
         return True
 
@@ -376,10 +396,31 @@ async def process_publish_jobs_once() -> bool:
                 if not day_articles:
                     had_errors = True
                     continue
-                for index in range(articles_per_day):
-                    scheduled_for = retrospective_scheduled_for(day['date'])
-                    rotated = day_articles[index % len(day_articles):] + day_articles[:index % len(day_articles)]
-                    result, limited_until = await publish_one(site, rotated, scheduled_for, index + 1)
+                scheduled_for = retrospective_scheduled_for(day['date'])
+                with SessionLocal() as db:
+                    published_rows = db.execute(
+                        select(PublishedArticle.source_article_ids, PublishedArticle.sequence_number)
+                        .where(PublishedArticle.job_id == job.id)
+                        .where(PublishedArticle.site_id == site.id)
+                        .where(PublishedArticle.scheduled_for == scheduled_for)
+                        .where(PublishedArticle.status.in_(['running', 'published']))
+                    ).all()
+                used_article_ids = {
+                    article_id
+                    for row_ids, _sequence_number in published_rows
+                    if isinstance(row_ids, list)
+                    for article_id in row_ids
+                    if isinstance(article_id, int)
+                }
+                next_sequence_number = 1 + max(
+                    [sequence_number for _row_ids, sequence_number in published_rows if isinstance(sequence_number, int)]
+                    or [0]
+                )
+                unique_snapshots = build_unique_article_snapshots(day_articles, articles_per_day, used_article_ids)
+                if len(unique_snapshots) < articles_per_day:
+                    had_errors = True
+                for index, article_snapshot in enumerate(unique_snapshots, start=next_sequence_number):
+                    result, limited_until = await publish_one(site, article_snapshot, scheduled_for, index)
                     if result == 'rate_limited':
                         retry_after = limited_until
                         break
@@ -392,8 +433,9 @@ async def process_publish_jobs_once() -> bool:
                 break
     else:
         snapshot = job.articles_snapshot if isinstance(job.articles_snapshot, list) else []
+        hourly_slot = now_utc().replace(minute=0, second=0, microsecond=0) if job.pipeline_type == 'continuous' else None
         for site in sites:
-            result, limited_until = await publish_one(site, snapshot, None, None)
+            result, limited_until = await publish_one(site, snapshot, hourly_slot, None)
             if result == 'rate_limited':
                 retry_after = limited_until
                 break
@@ -409,8 +451,13 @@ async def process_publish_jobs_once() -> bool:
                 current.retry_after = retry_after
                 current.error_text = f'Publishing paused until {retry_after.isoformat()} because a site generation limit was reached'
             else:
-                current.status = 'completed_with_errors' if had_errors else 'completed'
-                current.finished_at = now_utc()
+                if current.pipeline_type == 'continuous':
+                    current.status = 'waiting'
+                    current.retry_after = now_utc() + timedelta(hours=1)
+                    current.error_text = 'Last hourly pass completed with errors' if had_errors else None
+                else:
+                    current.status = 'completed_with_errors' if had_errors else 'completed'
+                    current.finished_at = now_utc()
             db.commit()
     return True
 

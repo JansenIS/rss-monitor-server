@@ -205,5 +205,32 @@ class RetrospectiveSchedulingTests(unittest.TestCase):
         self.assertEqual(scheduled_times[0].isoformat(), '2026-06-08T00:00:00+00:00')
 
 
+
+class SiteCountryBindingTests(unittest.TestCase):
+    def test_site_without_countries_accepts_any_country_for_legacy_sites(self):
+        site = type('Site', (), {'country_codes': None})()
+        self.assertTrue(publishing.site_accepts_country(site, 'SC'))
+
+    def test_site_accepts_only_configured_countries(self):
+        site = type('Site', (), {'country_codes': ['sc', 'cd']})()
+        self.assertTrue(publishing.site_accepts_country(site, 'SC'))
+        self.assertFalse(publishing.site_accepts_country(site, 'KE'))
+
+
+class UniqueArticleSnapshotTests(unittest.TestCase):
+    def test_unique_snapshots_do_not_rotate_and_reuse_articles(self):
+        articles = [{'id': 1, 'title': 'one'}, {'id': 2, 'title': 'two'}]
+
+        snapshots = publishing.build_unique_article_snapshots(articles, 3)
+
+        self.assertEqual(snapshots, [[articles[0]], [articles[1]]])
+
+    def test_unique_snapshots_skip_already_used_articles(self):
+        articles = [{'id': 1, 'title': 'one'}, {'id': 2, 'title': 'two'}]
+
+        snapshots = publishing.build_unique_article_snapshots(articles, 2, {1})
+
+        self.assertEqual(snapshots, [[articles[1]]])
+
 if __name__ == '__main__':
     unittest.main()

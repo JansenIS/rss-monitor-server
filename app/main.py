@@ -366,6 +366,21 @@ def _site_out(site: WordPressSite) -> WordPressSiteOut:
     return WordPressSiteOut(**data)
 
 
+
+@app.get('/api/v1/publishing/countries')
+def list_publishing_countries(db: Session = Depends(get_db), _: None = Depends(require_auth)):
+    rows = db.execute(
+        select(Source.country_code, func.max(Source.country_name))
+        .where(Source.country_code.is_not(None))
+        .group_by(Source.country_code)
+        .order_by(Source.country_code.asc())
+    ).all()
+    return [
+        {'code': code, 'name': name}
+        for code, name in rows
+        if code
+    ]
+
 @app.get('/api/v1/publishing/sites', response_model=list[WordPressSiteOut])
 def list_wordpress_sites(db: Session = Depends(get_db), _: None = Depends(require_auth)):
     return [_site_out(site) for site in db.execute(select(WordPressSite).order_by(WordPressSite.id.asc())).scalars().all()]
@@ -436,7 +451,9 @@ def create_publish_job(payload: PublishJobRequest, db: Session = Depends(get_db)
     period_end = None
     planned_articles_per_site = None
 
-    if payload.pipeline_type == 'retrospective':
+    if payload.pipeline_type == 'continuous':
+        snapshot = []
+    elif payload.pipeline_type == 'retrospective':
         if not payload.period_start or not payload.period_end or not payload.articles_per_day:
             raise HTTPException(status_code=400, detail='period_start, period_end and articles_per_day are required for retrospective jobs')
         try:

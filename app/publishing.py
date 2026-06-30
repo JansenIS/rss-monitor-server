@@ -122,6 +122,21 @@ def build_articles_snapshot(articles: list[Article]) -> list[dict[str, Any]]:
     ]
 
 
+
+def build_unique_article_snapshots(day_articles: list[dict[str, Any]], limit: int, used_article_ids: set[int] | None = None) -> list[list[dict[str, Any]]]:
+    """Return single-article snapshots without reusing source articles."""
+    used_article_ids = used_article_ids or set()
+    snapshots: list[list[dict[str, Any]]] = []
+    for article in day_articles:
+        raw_id = article.get('id')
+        if not isinstance(raw_id, int) or raw_id in used_article_ids:
+            continue
+        snapshots.append([article])
+        used_article_ids.add(raw_id)
+        if len(snapshots) >= limit:
+            break
+    return snapshots
+
 def source_ids_from_snapshot(snapshot: list[dict[str, Any]]) -> list[int]:
     ids = []
     for item in snapshot:
@@ -140,6 +155,20 @@ def mark_source_articles_used(db: Session, article_ids: list[int], job_id: int) 
         if article.publishing_used_at is None:
             article.publishing_used_at = used_at
             article.publishing_job_id = job_id
+
+
+
+def normalize_country_codes(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    return [str(item).strip().upper() for item in value if str(item).strip()]
+
+
+def site_accepts_country(site: WordPressSite, country_code: str) -> bool:
+    codes = normalize_country_codes(site.country_codes)
+    return not codes or country_code.upper() in codes
 
 
 def site_generation_delay(db: Session, site: WordPressSite) -> datetime | None:
