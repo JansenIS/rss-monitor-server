@@ -17,6 +17,16 @@ class PublishingFilenameTests(unittest.TestCase):
         self.assertIn("filename*=UTF-8''congo-sant%C3%A9-brazzaville-formation-cl%C3%A9.png", header)
 
 
+class PublishingPromptTests(unittest.TestCase):
+    def test_image_prompt_avoids_national_clothing_stereotypes(self):
+        prompt = publishing.build_image_prompt('transport investment', 'Kenya', 'ke')
+
+        self.assertIn('Kenya (KE)', prompt)
+        self.assertIn('Avoid national or ethnic stereotypes', prompt)
+        self.assertIn('clichéd traditional costumes', prompt)
+        self.assertIn('generic folk clothing', prompt)
+
+
 class FailingAsyncClient:
     def __init__(self, *args, **kwargs):
         self.timeout = kwargs.get('timeout')
