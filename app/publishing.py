@@ -22,9 +22,11 @@ ROUTERAI_IMAGE_TIMEOUT_SECONDS = 900
 ROUTERAI_IMAGE_RETRY_STATUSES = {502, 503, 504}
 ROUTERAI_IMAGE_RETRY_DELAYS_SECONDS = (5, 15, 30)
 DEFAULT_ROUTERAI_IMAGE_MODEL = 'openai/gpt-image-1'
-NATURE_STEREOTYPE_BAN = (
+STEREOTYPE_BAN = (
     'Do not include stereotypical nature or safari imagery: no rhinos, parrots, '
-    'crocodiles, jungles, generic wildlife, or unrelated exotic landscapes.'
+    'crocodiles, jungles, generic wildlife, or unrelated exotic landscapes. '
+    'Avoid national or ethnic stereotypes, including clichéd traditional costumes, '
+    'caricatured cultural props, or generic folk clothing unless they are directly relevant to the news event.'
 )
 
 
@@ -218,7 +220,7 @@ def build_image_prompt(article_title: str, country_name: str, country_code: str)
     return (
         f'Create an editorial news illustration for an article about {article_title!r}. '
         f'The specific country is {country_name} ({country_code.upper()}); make visual cues accurate to this exact country '
-        f'and avoid flags or symbols of similar countries. {NATURE_STEREOTYPE_BAN} '
+        f'and avoid flags or symbols of similar countries. {STEREOTYPE_BAN} '
         'Use a modern press-photo style, realistic lighting, no text overlays, no logos.'
     )
 
