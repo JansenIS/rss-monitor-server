@@ -347,12 +347,25 @@ def get_publishing_settings(db: Session = Depends(get_db), _: None = Depends(req
 @app.post('/api/v1/publishing/settings', response_model=PublishingSettingsOut)
 def update_publishing_settings(payload: PublishingSettingsIn, db: Session = Depends(get_db), _: None = Depends(require_auth)):
     settings_obj = get_or_create_settings(db)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updated_fields = payload.model_dump(exclude_unset=True)
+    rewrite_model_was_updated = 'rewrite_model' in updated_fields
+    for field, value in updated_fields.items():
         if field == 'routerai_api_key' and (value is None or value == '' or value == '********'):
             continue
         setattr(settings_obj, field, value)
     if not settings_obj.routerai_base_url:
         settings_obj.routerai_base_url = 'https://routerai.ru/api/v1'
+
+    # A job keeps its effective model so that the worker can process it without
+    # consulting the settings table.  Refresh unfinished jobs when the global
+    # model changes; otherwise recurring and queued jobs would continue using
+    # the model that was configured when they were created.
+    if rewrite_model_was_updated:
+        db.execute(
+            update(PublishJob)
+            .where(PublishJob.status.not_in(['completed', 'completed_with_errors']))
+            .values(rewrite_model=settings_obj.rewrite_model)
+        )
     db.commit()
     db.refresh(settings_obj)
     return _settings_out(settings_obj)

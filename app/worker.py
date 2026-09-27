@@ -342,11 +342,15 @@ async def process_publish_jobs_once() -> bool:
                         row.status = 'canceled'
                         db.commit()
                     return 'canceled', None
+                # Reload the model immediately before generation.  This lets a
+                # settings change take effect for the remaining publications of
+                # a job that was already running when it was saved.
+                rewrite_model = (current_job.rewrite_model if current_job else job.rewrite_model) or 'gpt-4o-mini'
             planned_date = scheduled_for.date().isoformat() if scheduled_for else None
             article = await routerai_chat(
                 base_url,
                 api_key,
-                job.rewrite_model or 'gpt-4o-mini',
+                rewrite_model,
                 build_rewrite_messages(snapshot, site, job, planned_date=planned_date, sequence_number=sequence_number),
             )
             title = article.get('title') or 'Generated article'
